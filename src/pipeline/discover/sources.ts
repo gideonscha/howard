@@ -134,7 +134,7 @@ export async function discoverIaopcc(budget: CreditBudget): Promise<SourcedPartn
     `iaopcc: ${allLinks.length} member pages found, ${doneLinks.size} already done, processing ${memberLinks.length}`
   );
   const prompt =
-    "Extract the pet cemetery / crematory business on this member profile page: business name, city, US state (2-letter), phone, website URL, and contact email if shown.";
+    "Extract the pet cemetery / crematory business on this member profile page: business name, city, US state (2-letter), phone, website URL, and contact email if shown. ONLY extract businesses located in the United States — skip UK/Canada/other countries entirely. The website must be the business's own site; never use iaopc.com URLs as the website.";
 
   const { setProgress } = await import("@/lib/progress");
   let i = 0;

@@ -54,15 +54,20 @@ export async function runDiscover(sourceName?: string): Promise<{
       skipped++;
       continue;
     }
+    const clean = (s: string | undefined | null) => {
+      const t = s?.trim();
+      return t ? t : null;
+    };
+    const website = clean(p.website);
     const { error } = await supa.from("ph_partners").insert({
       business_name: p.business_name,
       segment: p.segment,
       subtype: p.subtype,
-      city: p.city ?? null,
-      state: p.state ?? null,
-      website: p.website ?? null,
-      email: p.email ?? null,
-      phone: p.phone ?? null,
+      city: clean(p.city),
+      state: clean(p.state)?.toUpperCase() ?? null,
+      website: website?.includes("iaopc.com") ? null : website,
+      email: clean(p.email)?.toLowerCase() ?? null,
+      phone: clean(p.phone),
       source: p.source,
       is_chain: p.is_chain,
       stage: "sourced",
