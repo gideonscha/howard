@@ -5,6 +5,32 @@ import {
   scrapeLinks,
 } from "@/lib/firecrawl";
 
+// Strict variant of the extraction schema for Anthropic structured outputs
+// (requires additionalProperties:false + exhaustive required lists).
+const CLAUDE_BUSINESS_SCHEMA = {
+  type: "object",
+  properties: {
+    businesses: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          business_name: { type: ["string", "null"] },
+          city: { type: ["string", "null"] },
+          state: { type: ["string", "null"] },
+          phone: { type: ["string", "null"] },
+          website: { type: ["string", "null"] },
+          email: { type: ["string", "null"] },
+        },
+        required: ["business_name", "city", "state", "phone", "website", "email"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["businesses"],
+  additionalProperties: false,
+};
+
 export interface SourcedPartner extends ExtractedBusiness {
   source: string;
   segment: "memorial" | "vet";
@@ -12,20 +38,95 @@ export interface SourcedPartner extends ExtractedBusiness {
   is_chain: boolean;
 }
 
+// Some directory sites 403 generic fetchers but allow a plain browser UA;
+// try a direct fetch first (free) before spending Firecrawl credits.
+async function fetchTextDirect(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+// The IAOPCC directory page is a search widget with no crawlable member links,
+// so harvest member-profile URLs (/members/?id=NNN) from the sitemap instead.
+async function iaopccMemberLinks(budget: CreditBudget): Promise<string[]> {
+  const found = new Set<string>();
+  const memberUrl = /https?:\/\/(?:www\.)?iaopc\.com\/members\/\?id=\d+/g;
+
+  for (const sitemap of [
+    "https://www.iaopc.com/sitemap.xml",
+    "https://www.iaopc.com/sitemap_index.xml",
+  ]) {
+    const xml = await fetchTextDirect(sitemap);
+    if (!xml) continue;
+    for (const m of xml.match(memberUrl) ?? []) found.add(m);
+    // sitemap index → child sitemaps
+    if (found.size === 0 && xml.includes("<sitemapindex")) {
+      for (const child of xml.match(/<loc>([^<]+)<\/loc>/g) ?? []) {
+        const url = child.replace(/<\/?loc>/g, "");
+        const childXml = await fetchTextDirect(url);
+        for (const m of childXml?.match(memberUrl) ?? []) found.add(m);
+      }
+    }
+    if (found.size > 0) break;
+  }
+
+  // Fallback: link-scrape the directory page via Firecrawl.
+  if (found.size === 0 && budget.charge(1)) {
+    const links = await scrapeLinks("https://www.iaopc.com/professionals/professional-members");
+    for (const l of links) if (l.includes("/members/") && l.includes("id=")) found.add(l);
+  }
+  return [...found];
+}
+
 // (2) Association roster — IAOPCC member directory (iaopc.com).
 // Membership is itself a quality filter. Server-rendered member pages.
 export async function discoverIaopcc(budget: CreditBudget): Promise<SourcedPartner[]> {
   const out: SourcedPartner[] = [];
-  if (!budget.charge(1)) return out;
-  const links = await scrapeLinks("https://www.iaopc.com/professionals/professional-members");
-  const memberLinks = [...new Set(links.filter((l) => l.includes("/members/")))];
+  const allLinks = await iaopccMemberLinks(budget);
+
+  // Resumable: skip member pages already ingested in earlier runs, and cap
+  // per-run volume so the run finishes inside the function time limit.
+  const { db } = await import("@/lib/supabase");
+  const { data: done } = await db()
+    .from("ph_partners")
+    .select("source")
+    .like("source", "iaopcc:%");
+  const doneLinks = new Set((done ?? []).map((r) => r.source.slice("iaopcc:".length)));
+  const memberLinks = allLinks.filter((l) => !doneLinks.has(l)).slice(0, 100);
+  console.log(
+    `iaopcc: ${allLinks.length} member pages found, ${doneLinks.size} already done, processing ${memberLinks.length}`
+  );
+  const prompt =
+    "Extract the pet cemetery / crematory business on this member profile page: business name, city, US state (2-letter), phone, website URL, and contact email if shown.";
+
   for (const link of memberLinks) {
-    if (!budget.charge(5)) break;
     try {
-      const { businesses } = await scrapeBusinesses(
-        link,
-        "Extract the pet cemetery / crematory business on this member profile page: business name, city, US state (2-letter), phone, website URL, and contact email if shown."
-      );
+      let businesses: ExtractedBusiness[] = [];
+      // Free path: direct fetch + Claude extraction.
+      const html = await fetchTextDirect(link);
+      if (html) {
+        const text = html
+          .replace(/<script[\s\S]*?<\/script>/gi, " ")
+          .replace(/<style[\s\S]*?<\/style>/gi, " ")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .slice(0, 12000);
+        businesses = await extractBusinessesWithClaude(text, prompt);
+      } else {
+        // Paid fallback: Firecrawl JSON scrape.
+        if (!budget.charge(5)) break;
+        businesses = (await scrapeBusinesses(link, prompt)).businesses;
+      }
       for (const b of businesses) {
         if (!b.business_name) continue;
         out.push({
@@ -41,6 +142,24 @@ export async function discoverIaopcc(budget: CreditBudget): Promise<SourcedPartn
     }
   }
   return out;
+}
+
+async function extractBusinessesWithClaude(
+  pageText: string,
+  prompt: string
+): Promise<ExtractedBusiness[]> {
+  const { structured } = await import("@/lib/anthropic");
+  const r = await structured<{ businesses: (ExtractedBusiness & Record<string, string | null>)[] }>({
+    system:
+      "You extract structured business listings from web page text. Only extract businesses actually present in the text; never invent fields.",
+    user: `${prompt}\n\nPage text:\n---\n${pageText}\n---`,
+    schema: CLAUDE_BUSINESS_SCHEMA,
+    maxTokens: 1024,
+  });
+  // normalize nulls → undefined to match ExtractedBusiness
+  return (r.businesses ?? []).map((b) =>
+    Object.fromEntries(Object.entries(b).filter(([, v]) => v != null))
+  ) as ExtractedBusiness[];
 }
 
 // (1) Chains & consolidators — Gateway Services brand network.
