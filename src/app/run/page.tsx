@@ -4,7 +4,7 @@ import { runStageAction } from "@/app/actions";
 import { AutoRefresh } from "./refresh";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 const STAGES: { stage: string; label: string; paramHint?: string; defaultParam?: string }[] = [
   { stage: "discover", label: "Discover", paramHint: "source: iaopcc | gateway | lapoflove", defaultParam: "iaopcc" },

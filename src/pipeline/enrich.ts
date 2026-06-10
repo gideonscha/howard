@@ -116,5 +116,27 @@ Classify this business.`,
       console.error(`enrich: failed for ${partner.id}: ${(e as Error).message}`);
     }
   }
+  // Re-verify pass: partners that got through classification while email
+  // verification was unavailable (e.g. missing API key) stay 'unverified';
+  // pick them up here so a later run can heal them.
+  const { data: unverified } = await supa
+    .from("ph_partners")
+    .select("id,email")
+    .in("stage", ["qualified", "queued"])
+    .eq("email_status", "unverified")
+    .not("email", "is", null)
+    .limit(limit);
+  for (const row of unverified ?? []) {
+    try {
+      const status = await verifyEmail(row.email as string);
+      await supa
+        .from("ph_partners")
+        .update({ email_status: status, updated_at: new Date().toISOString() })
+        .eq("id", row.id);
+    } catch (e) {
+      console.warn(`enrich(reverify): failed for ${row.email}: ${(e as Error).message}`);
+    }
+  }
+
   return { processed: partners?.length ?? 0, qualified };
 }

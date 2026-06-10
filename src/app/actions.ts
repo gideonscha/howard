@@ -18,10 +18,20 @@ import { runAttribute } from "@/pipeline/attribute";
 // _run_progress while running, _last_run_result when done. /run live-polls.
 export async function runStageAction(formData: FormData) {
   const { waitUntil } = await import("@vercel/functions");
-  const { setProgress } = await import("@/lib/progress");
+  const { setProgress, getProgress } = await import("@/lib/progress");
 
   const stage = String(formData.get("stage"));
   const param = String(formData.get("param") ?? "").trim();
+
+  // One run at a time: refuse if another run reported progress < 3 min ago.
+  const current = await getProgress();
+  if (
+    current &&
+    !current.text.includes("✅") &&
+    Date.now() - new Date(current.at).getTime() < 3 * 60_000
+  ) {
+    return;
+  }
 
   const execute = async () => {
     switch (stage) {
