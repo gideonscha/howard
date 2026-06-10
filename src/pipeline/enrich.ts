@@ -52,8 +52,12 @@ export async function runEnrich(limit = 10): Promise<{ processed: number; qualif
     .limit(limit);
   if (error) throw error;
 
+  const { setProgress } = await import("@/lib/progress");
   let qualified = 0;
+  let i = 0;
   for (const partner of (partners ?? []) as Partner[]) {
+    i++;
+    await setProgress(`enrich: ${i}/${partners?.length ?? 0} — ${partner.business_name}`);
     try {
       let siteContent = "";
       if (partner.website) {

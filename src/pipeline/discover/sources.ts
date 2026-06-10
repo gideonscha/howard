@@ -109,7 +109,15 @@ export async function discoverIaopcc(budget: CreditBudget): Promise<SourcedPartn
   const prompt =
     "Extract the pet cemetery / crematory business on this member profile page: business name, city, US state (2-letter), phone, website URL, and contact email if shown.";
 
+  const { setProgress } = await import("@/lib/progress");
+  let i = 0;
   for (const link of memberLinks) {
+    i++;
+    if (i % 5 === 1) {
+      await setProgress(
+        `discover iaopcc: ${i}/${memberLinks.length} member pages (${doneLinks.size} done in earlier runs), ${out.length} businesses so far`
+      );
+    }
     try {
       let businesses: ExtractedBusiness[] = [];
       // Free path: direct fetch + Claude extraction.
@@ -181,8 +189,12 @@ export async function discoverGateway(budget: CreditBudget): Promise<SourcedPart
       )
     ),
   ];
+  const { setProgress } = await import("@/lib/progress");
+  let i = 0;
   for (const brandUrl of external) {
     if (!budget.charge(5)) break;
+    i++;
+    await setProgress(`discover gateway: ${i}/${external.length} brand sites, ${out.length} locations so far`);
     try {
       const { businesses } = await scrapeBusinesses(
         brandUrl,
@@ -217,8 +229,14 @@ export async function discoverLapOfLove(budget: CreditBudget): Promise<SourcedPa
       links.filter((l) => /find-a-vet\/[^/]+\/[^/]+/.test(l) && !l.endsWith("find-a-vet"))
     ),
   ];
+  const { setProgress } = await import("@/lib/progress");
+  let i = 0;
   for (const page of cityPages) {
     if (!budget.charge(9)) break;
+    i++;
+    if (i % 5 === 1) {
+      await setProgress(`discover lapoflove: ${i}/${cityPages.length} city pages, ${out.length} locations so far`);
+    }
     try {
       const { businesses } = await scrapeBusinesses(
         page,

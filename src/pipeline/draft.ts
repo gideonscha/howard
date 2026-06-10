@@ -64,8 +64,12 @@ export async function runDraft(limit = 5): Promise<{ drafted: number }> {
     .filter((p) => p.ph_outreach.length === 0)
     .slice(0, limit);
 
+  const { setProgress } = await import("@/lib/progress");
   let drafted = 0;
+  let i = 0;
   for (const p of fresh) {
+    i++;
+    await setProgress(`draft: ${i}/${fresh.length} — ${p.business_name}`);
     const detail =
       (p.enrichment?.business_detail as string | undefined) ??
       `${p.business_name} serves pet families in ${p.city ?? "their area"}, ${p.state ?? ""}`;

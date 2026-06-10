@@ -13,48 +13,56 @@ import { runAttribute } from "@/pipeline/attribute";
 
 // Server actions sit behind the Basic-auth middleware (dashboard-only).
 
-// Dashboard-triggered stage runs (the curl alternative). Result lands in
-// ph_config._last_run_result for display on /run.
+// Dashboard-triggered stage runs. The action returns immediately; the stage
+// executes in the background (waitUntil) and reports via ph_config:
+// _run_progress while running, _last_run_result when done. /run live-polls.
 export async function runStageAction(formData: FormData) {
+  const { waitUntil } = await import("@vercel/functions");
+  const { setProgress } = await import("@/lib/progress");
+
   const stage = String(formData.get("stage"));
   const param = String(formData.get("param") ?? "").trim();
-  let result: unknown;
-  try {
+
+  const execute = async () => {
     switch (stage) {
       case "discover":
-        result = await runDiscover(param || undefined);
-        break;
+        return runDiscover(param || undefined);
       case "enrich":
-        result = await runEnrich(param ? Number(param) : 10);
-        break;
+        return runEnrich(param ? Number(param) : 10);
       case "score":
-        result = await runScore();
-        break;
+        return runScore();
       case "draft":
-        result = await runDraft(param ? Number(param) : 5);
-        break;
+        return runDraft(param ? Number(param) : 5);
       case "send":
-        result = await runSend();
-        break;
+        return runSend();
       case "followup":
-        result = await runFollowup();
-        break;
+        return runFollowup();
       case "attribute":
-        result = await runAttribute();
-        break;
+        return runAttribute();
       default:
-        result = { error: `unknown stage ${stage}` };
+        return { error: `unknown stage ${stage}` };
     }
-  } catch (e) {
-    result = { error: (e as Error).message };
-  }
-  await db()
-    .from("ph_config")
-    .upsert({
-      key: "_last_run_result",
-      value: JSON.stringify({ stage, at: new Date().toISOString(), result }, null, 2),
-      updated_at: new Date().toISOString(),
-    });
+  };
+
+  await setProgress(`${stage}: started…`);
+  waitUntil(
+    (async () => {
+      let result: unknown;
+      try {
+        result = await execute();
+      } catch (e) {
+        result = { error: (e as Error).message };
+      }
+      await db()
+        .from("ph_config")
+        .upsert({
+          key: "_last_run_result",
+          value: JSON.stringify({ stage, at: new Date().toISOString(), result }, null, 2),
+          updated_at: new Date().toISOString(),
+        });
+      await setProgress(`${stage}: ✅ finished`);
+    })()
+  );
   revalidatePath("/run");
 }
 

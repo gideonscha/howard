@@ -1,5 +1,7 @@
 import { db } from "@/lib/supabase";
+import { getProgress } from "@/lib/progress";
 import { runStageAction } from "@/app/actions";
+import { AutoRefresh } from "./refresh";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -14,20 +16,40 @@ const STAGES: { stage: string; label: string; paramHint?: string; defaultParam?:
   { stage: "attribute", label: "Attribute (Shopify sync)" },
 ];
 
-// Manual stage runner — the phone-friendly alternative to curl + CRON_SECRET.
+// Manual stage runner. Stages run in the background; this page live-refreshes
+// with progress and the final result.
 export default async function RunPage() {
-  const { data } = await db()
-    .from("ph_config")
-    .select("value")
-    .eq("key", "_last_run_result")
-    .maybeSingle();
+  const [progress, { data: last }] = await Promise.all([
+    getProgress(),
+    db().from("ph_config").select("value").eq("key", "_last_run_result").maybeSingle(),
+  ]);
+
+  const running = progress && !progress.text.includes("✅");
+  const ageSec = progress ? Math.round((Date.now() - new Date(progress.at).getTime()) / 1000) : null;
 
   return (
     <>
+      <AutoRefresh seconds={5} />
       <h1>Run pipeline stages</h1>
-      <p className="muted small">
-        Runs execute synchronously — discover/enrich can take a couple of minutes. One at a time.
-      </p>
+
+      <div className={`card ${running ? "warm" : ""}`}>
+        <strong>Status:</strong>{" "}
+        {progress ? (
+          <>
+            {progress.text}{" "}
+            <span className="muted small">
+              ({ageSec}s ago{running && ageSec != null && ageSec > 360 ? " — likely timed out, check result below / rerun" : ""})
+            </span>
+          </>
+        ) : (
+          <span className="muted">idle — nothing run yet</span>
+        )}
+        <p className="muted small" style={{ marginBottom: 0 }}>
+          This page refreshes itself every 5s. Runs continue in the background after the button
+          returns; discover processes up to 100 pages per tap and resumes on the next tap.
+        </p>
+      </div>
+
       {STAGES.map((s) => (
         <form action={runStageAction} className="card row" key={s.stage}>
           <input type="hidden" name="stage" value={s.stage} />
@@ -46,8 +68,8 @@ export default async function RunPage() {
       ))}
 
       <h2>Last run result</h2>
-      {data?.value ? (
-        <div className="email-body small">{data.value}</div>
+      {last?.value ? (
+        <div className="email-body small">{last.value}</div>
       ) : (
         <p className="muted">Nothing run yet.</p>
       )}
