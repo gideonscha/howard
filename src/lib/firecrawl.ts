@@ -97,3 +97,14 @@ export async function scrapeLinks(url: string, stealth = false): Promise<string[
   });
   return r.data?.links ?? [];
 }
+
+// Site → URL inventory via Firecrawl /map (sitemap + crawl index + search).
+// The right tool for directories that hide links behind search widgets.
+export async function mapSite(url: string, search?: string): Promise<string[]> {
+  const r = await fc<{ links?: ({ url: string } | string)[] }>("/map", {
+    url,
+    ...(search ? { search } : {}),
+    limit: 2000,
+  });
+  return (r.links ?? []).map((l) => (typeof l === "string" ? l : l.url)).filter(Boolean);
+}

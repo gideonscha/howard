@@ -56,35 +56,62 @@ async function fetchTextDirect(url: string): Promise<string | null> {
   }
 }
 
-// The IAOPCC directory page is a search widget with no crawlable member links,
-// so harvest member-profile URLs (/members/?id=NNN) from the sitemap instead.
+// The IAOPCC directory page is a search widget with no crawlable member links.
+// Harvest member-profile URLs (/members/?id=NNN) by, in order:
+// (1) Firecrawl /map (sitemap + crawl index), (2) direct sitemap fetch,
+// (3) directory link-scrape, (4) ph_seed_urls rows (manually seeded backstop).
 async function iaopccMemberLinks(budget: CreditBudget): Promise<string[]> {
   const found = new Set<string>();
   const memberUrl = /https?:\/\/(?:www\.)?iaopc\.com\/members\/\?id=\d+/g;
+  const isMemberLink = (l: string) => /\/members\/\?id=\d+/.test(l);
 
-  for (const sitemap of [
-    "https://www.iaopc.com/sitemap.xml",
-    "https://www.iaopc.com/sitemap_index.xml",
-  ]) {
-    const xml = await fetchTextDirect(sitemap);
-    if (!xml) continue;
-    for (const m of xml.match(memberUrl) ?? []) found.add(m);
-    // sitemap index → child sitemaps
-    if (found.size === 0 && xml.includes("<sitemapindex")) {
-      for (const child of xml.match(/<loc>([^<]+)<\/loc>/g) ?? []) {
-        const url = child.replace(/<\/?loc>/g, "");
-        const childXml = await fetchTextDirect(url);
-        for (const m of childXml?.match(memberUrl) ?? []) found.add(m);
+  // (1) Firecrawl map — the heavy lifter for hidden directories.
+  if (budget.charge(2)) {
+    try {
+      const { mapSite } = await import("@/lib/firecrawl");
+      for (const l of await mapSite("https://www.iaopc.com", "members")) {
+        if (isMemberLink(l)) found.add(l);
       }
+      console.log(`iaopcc: map yielded ${found.size} member links`);
+    } catch (e) {
+      console.warn(`iaopcc: map failed: ${(e as Error).message}`);
     }
-    if (found.size > 0) break;
   }
 
-  // Fallback: link-scrape the directory page via Firecrawl.
+  // (2) Direct sitemap fetch (free).
+  if (found.size === 0) {
+    for (const sitemap of [
+      "https://www.iaopc.com/sitemap.xml",
+      "https://www.iaopc.com/sitemap_index.xml",
+    ]) {
+      const xml = await fetchTextDirect(sitemap);
+      if (!xml) continue;
+      for (const m of xml.match(memberUrl) ?? []) found.add(m);
+      if (found.size === 0 && xml.includes("<sitemapindex")) {
+        for (const child of xml.match(/<loc>([^<]+)<\/loc>/g) ?? []) {
+          const url = child.replace(/<\/?loc>/g, "");
+          const childXml = await fetchTextDirect(url);
+          for (const m of childXml?.match(memberUrl) ?? []) found.add(m);
+        }
+      }
+      if (found.size > 0) break;
+    }
+  }
+
+  // (3) Directory page link-scrape.
   if (found.size === 0 && budget.charge(1)) {
     const links = await scrapeLinks("https://www.iaopc.com/professionals/professional-members");
-    for (const l of links) if (l.includes("/members/") && l.includes("id=")) found.add(l);
+    for (const l of links) if (isMemberLink(l)) found.add(l);
   }
+
+  // (4) Seed rows — always unioned in, so manual seeding works regardless.
+  const { db } = await import("@/lib/supabase");
+  const { data: seeds } = await db()
+    .from("ph_seed_urls")
+    .select("url")
+    .eq("source", "iaopcc");
+  for (const s of seeds ?? []) if (s.url) found.add(s.url);
+
   return [...found];
 }
 
