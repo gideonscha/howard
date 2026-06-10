@@ -47,6 +47,8 @@ export default async function RunPage() {
         <p className="muted small" style={{ marginBottom: 0 }}>
           This page refreshes itself every 5s. Runs continue in the background after the button
           returns; discover processes up to 100 pages per tap and resumes on the next tap.
+          Build: <code>{process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "local"}</code> — if this
+          doesn&apos;t match the latest deploy, reload the page before tapping.
         </p>
       </div>
 
