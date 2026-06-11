@@ -139,6 +139,78 @@ function HBar({ label, value, max, color }: { label: string; value: number; max:
   );
 }
 
+// Tile-grid US map: [col, row] per state — geographic-ish, equal weight.
+const STATE_GRID: Record<string, [number, number]> = {
+  AK: [0, 0], ME: [11, 0],
+  VT: [10, 1], NH: [11, 1],
+  WA: [1, 2], ID: [2, 2], MT: [3, 2], ND: [4, 2], MN: [5, 2], IL: [6, 2], WI: [7, 2], MI: [8, 2], NY: [9, 2], RI: [10, 2], MA: [11, 2],
+  OR: [1, 3], NV: [2, 3], WY: [3, 3], SD: [4, 3], IA: [5, 3], IN: [6, 3], OH: [7, 3], PA: [8, 3], NJ: [9, 3], CT: [10, 3],
+  CA: [1, 4], UT: [2, 4], CO: [3, 4], NE: [4, 4], MO: [5, 4], KY: [6, 4], WV: [7, 4], VA: [8, 4], MD: [9, 4], DE: [10, 4],
+  AZ: [2, 5], NM: [3, 5], KS: [4, 5], AR: [5, 5], TN: [6, 5], NC: [7, 5], SC: [8, 5], DC: [9, 5],
+  OK: [4, 6], LA: [5, 6], MS: [6, 6], AL: [7, 6], GA: [8, 6],
+  HI: [0, 7], TX: [4, 7], FL: [8, 7],
+};
+
+function UsTileMap({
+  byState,
+}: {
+  byState: Map<string, { live: number; verified: number }>;
+}) {
+  const cell = 46;
+  const pad = 3;
+  const cols = 12;
+  const rows = 8;
+  const max = Math.max(1, ...[...byState.values()].map((v) => v.live));
+  return (
+    <svg
+      viewBox={`0 0 ${cols * cell} ${rows * cell}`}
+      style={{ width: "100%", height: "auto", maxWidth: 640 }}
+    >
+      {Object.entries(STATE_GRID).map(([abbr, [c, r]]) => {
+        const v = byState.get(abbr) ?? { live: 0, verified: 0 };
+        const intensity = v.live === 0 ? 0 : 0.25 + 0.75 * (v.live / max);
+        return (
+          <g key={abbr} transform={`translate(${c * cell}, ${r * cell})`}>
+            <rect
+              x={pad}
+              y={pad}
+              width={cell - pad * 2}
+              height={cell - pad * 2}
+              rx={5}
+              fill={v.live === 0 ? "#f0ede6" : `rgba(138,90,68,${intensity.toFixed(2)})`}
+              stroke="#e5e2db"
+            >
+              <title>{`${abbr}: ${v.live} prospects, ${v.verified} verified`}</title>
+            </rect>
+            <text
+              x={cell / 2}
+              y={cell / 2 - 3}
+              textAnchor="middle"
+              fontSize="11"
+              fontWeight="600"
+              fill={intensity > 0.55 ? "#fff" : "#1f2328"}
+            >
+              {abbr}
+            </text>
+            {v.live > 0 && (
+              <text
+                x={cell / 2}
+                y={cell / 2 + 11}
+                textAnchor="middle"
+                fontSize="10"
+                fill={intensity > 0.55 ? "#fff" : "#6b7280"}
+              >
+                {v.live}
+                {v.verified > 0 ? ` ✓${v.verified}` : ""}
+              </text>
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 export default async function MetricsPage() {
   const supa = db();
   const since14 = new Date();
@@ -155,14 +227,16 @@ export default async function MetricsPage() {
     { count: draftsPending },
     { count: needsAttention },
     { data: targetRow },
+    { data: placesCursorRow },
   ] = await Promise.all([
-    supa.from("ph_partners").select("stage,segment,email_status,fit_score,source,sample_status,created_at"),
+    supa.from("ph_partners").select("stage,segment,email_status,fit_score,source,sample_status,created_at,state"),
     supa.from("ph_send_log").select("dry_run,sent_at").gte("sent_at", since14.toISOString()),
     supa.from("ph_referrals").select("orders_count,revenue"),
     supa.from("ph_suppression").select("id", { count: "exact", head: true }),
     supa.from("ph_outreach").select("id", { count: "exact", head: true }).eq("status", "draft"),
     supa.from("ph_outreach").select("id", { count: "exact", head: true }).eq("needs_attention", true),
     supa.from("ph_config").select("value").eq("key", "prospect_target").maybeSingle(),
+    supa.from("ph_config").select("value").eq("key", "_places_cursor").maybeSingle(),
   ]);
 
   const ps = partners ?? [];
@@ -190,6 +264,22 @@ export default async function MetricsPage() {
     sourceCounts.set(key, (sourceCounts.get(key) ?? 0) + 1);
   }
   const sourceMax = Math.max(1, ...sourceCounts.values());
+
+  const byState = new Map<string, { live: number; verified: number }>();
+  for (const p of ps) {
+    if (!p.state || p.stage === "declined") continue;
+    const s = byState.get(p.state) ?? { live: 0, verified: 0 };
+    s.live++;
+    if (p.email_status === "verified") s.verified++;
+    byState.set(p.state, s);
+  }
+  let sweptStates = 0;
+  try {
+    const cursor = JSON.parse(placesCursorRow?.value ?? "{}");
+    sweptStates = cursor.done ? 50 : Number(cursor.stateIdx) || 0;
+  } catch {
+    /* no cursor yet */
+  }
 
   const days = lastNDays(14);
   const partnersPerDay = days.map((d) => ps.filter((p) => (p.created_at ?? "").slice(0, 10) === d).length);
@@ -270,6 +360,19 @@ export default async function MetricsPage() {
         <p className="small muted" style={{ marginBottom: 0 }}>
           sourced/qualified are transient — the hourly cycle promotes them to queued within
           minutes. declined = filtered out (non-US, suppliers, unsubscribes).
+        </p>
+      </div>
+
+      <div className="card">
+        <div className="row">
+          <h2 style={{ marginTop: 0 }}>Coverage map</h2>
+          <span className="pill pill-stage">
+            Places sweep: {sweptStates}/50 states
+          </span>
+        </div>
+        <UsTileMap byState={byState} />
+        <p className="small muted" style={{ marginBottom: 0 }}>
+          Shade = live prospects per state · ✓n = verified emails. Hover a state for details.
         </p>
       </div>
 
