@@ -27,10 +27,23 @@ export async function ActivityFeed({
   limit?: number;
   compact?: boolean;
 }) {
-  const [progress, { data: events }] = await Promise.all([
+  const [progress, { data: rawEvents }] = await Promise.all([
     getProgress(),
     db().from("ph_activity").select("*").order("at", { ascending: false }).limit(limit),
   ]);
+
+  // Compact mode: autopilot cycles repeat hourly — show only the latest one
+  // so the widget surfaces signal (sends, replies, errors), not heartbeat.
+  let events = rawEvents ?? [];
+  if (compact) {
+    let autopilotSeen = false;
+    events = events.filter((e) => {
+      if (e.kind !== "autopilot") return true;
+      if (autopilotSeen) return false;
+      autopilotSeen = true;
+      return true;
+    });
+  }
 
   const running = progress && !progress.text.includes("✅");
 
