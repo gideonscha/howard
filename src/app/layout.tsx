@@ -23,7 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <strong>Howard</strong> <span className="muted">partner-hunter</span>
           </div>
           <nav>
-            <Link href="/">Queue</Link>
+            <Link href="/queue">Queue</Link>
             <Link href="/metrics">Metrics</Link>
             <Link href="/pipeline">Pipeline</Link>
             <Link href="/samples">Samples</Link>

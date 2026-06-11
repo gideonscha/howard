@@ -99,7 +99,7 @@ export async function approveDraft(formData: FormData) {
     })
     .eq("id", id)
     .eq("status", "draft");
-  revalidatePath("/");
+  revalidatePath("/queue");
 }
 
 export async function rejectDraft(formData: FormData) {
@@ -113,7 +113,7 @@ export async function rejectDraft(formData: FormData) {
     })
     .eq("id", id)
     .in("status", ["draft", "approved"]);
-  revalidatePath("/");
+  revalidatePath("/queue");
 }
 
 export async function dismissAttention(formData: FormData) {
@@ -122,7 +122,7 @@ export async function dismissAttention(formData: FormData) {
     .from("ph_outreach")
     .update({ needs_attention: false, updated_at: new Date().toISOString() })
     .eq("id", id);
-  revalidatePath("/");
+  revalidatePath("/queue");
 }
 
 export async function markSampleShipped(formData: FormData) {
@@ -136,7 +136,7 @@ export async function markSampleShipped(formData: FormData) {
     })
     .eq("id", partnerId);
   revalidatePath("/samples");
-  revalidatePath("/");
+  revalidatePath("/queue");
 }
 
 export async function markSampleDelivered(formData: FormData) {
