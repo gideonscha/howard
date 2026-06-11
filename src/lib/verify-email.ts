@@ -7,7 +7,7 @@ export type EmailStatus = "verified" | "risky" | "invalid" | "unverified";
 export async function verifyEmail(email: string): Promise<EmailStatus> {
   const key = requireEnv("ZEROBOUNCE_API_KEY");
   const url = `https://api.zerobounce.net/v2/validate?api_key=${encodeURIComponent(key)}&email=${encodeURIComponent(email)}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
   if (!res.ok) throw new Error(`ZeroBounce → ${res.status}`);
   const data = (await res.json()) as { status?: string };
   switch (data.status) {

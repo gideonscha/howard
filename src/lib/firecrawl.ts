@@ -22,6 +22,8 @@ async function fc<T>(path: string, body?: unknown, method = "POST"): Promise<T> 
       "Content-Type": "application/json",
     },
     body: body ? JSON.stringify(body) : undefined,
+    // One slow site must never stall a whole pipeline run.
+    signal: AbortSignal.timeout(90_000),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -64,6 +66,7 @@ export async function scrapeMarkdown(url: string, stealth = false): Promise<stri
   const r = await fc<{ data?: { markdown?: string } }>("/scrape", {
     url,
     formats: ["markdown"],
+    timeout: 60_000,
     ...(stealth ? { proxy: "stealth" } : {}),
   });
   return r.data?.markdown ?? "";
@@ -80,6 +83,7 @@ export async function scrapeBusinesses(
   }>("/scrape", {
     url,
     formats: [{ type: "json", prompt, schema: BUSINESS_SCHEMA }, "links"],
+    timeout: 60_000,
     ...(stealth ? { proxy: "stealth" } : {}),
   });
   return {
@@ -93,6 +97,7 @@ export async function scrapeLinks(url: string, stealth = false): Promise<string[
   const r = await fc<{ data?: { links?: string[] } }>("/scrape", {
     url,
     formats: ["links"],
+    timeout: 60_000,
     ...(stealth ? { proxy: "stealth" } : {}),
   });
   return r.data?.links ?? [];
