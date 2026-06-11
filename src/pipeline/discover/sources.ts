@@ -1,3 +1,4 @@
+import { fetchTextDirect } from "@/lib/email-hunt";
 import {
   CreditBudget,
   ExtractedBusiness,
@@ -40,24 +41,6 @@ export interface SourcedPartner extends ExtractedBusiness {
   reviews_count?: number;
 }
 
-// Some directory sites 403 generic fetchers but allow a plain browser UA;
-// try a direct fetch first (free) before spending Firecrawl credits.
-async function fetchTextDirect(url: string): Promise<string | null> {
-  try {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!res.ok) return null;
-    return await res.text();
-  } catch {
-    return null;
-  }
-}
 
 // The IAOPCC directory page is a search widget with no crawlable member links.
 // Harvest member-profile URLs (/members/?id=NNN) by, in order:

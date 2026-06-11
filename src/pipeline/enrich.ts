@@ -82,7 +82,13 @@ Classify this business.`,
         schema: CLASSIFY_SCHEMA,
       });
 
-      const email = (c.contact_email ?? partner.email)?.trim().toLowerCase() || null;
+      let email = (c.contact_email ?? partner.email)?.trim().toLowerCase() || null;
+      // Sites rarely publish emails on the homepage Claude saw — hunt the
+      // contact/about pages directly before giving up on mailability.
+      if (!email && partner.website) {
+        const { findEmailOnSite } = await import("@/lib/email-hunt");
+        email = await findEmailOnSite(partner.website);
+      }
       let emailStatus: Partner["email_status"] = "unverified";
       if (email) {
         try {
@@ -116,6 +122,35 @@ Classify this business.`,
       console.error(`enrich: failed for ${partner.id}: ${(e as Error).message}`);
     }
   }
+  // Email-hunt healing pass: qualified partners with no email get the
+  // contact-page hunt retried (covers rows enriched before the hunter
+  // existed). Found addresses go straight to verification.
+  const { data: emailless } = await supa
+    .from("ph_partners")
+    .select("id,website,business_name,enrichment")
+    .in("stage", ["qualified", "queued"])
+    .is("email", null)
+    .not("website", "is", null)
+    .or("enrichment->>email_hunted.is.null,enrichment->>email_hunted.neq.true")
+    .limit(limit);
+  for (const row of emailless ?? []) {
+    try {
+      const { findEmailOnSite } = await import("@/lib/email-hunt");
+      const found = await findEmailOnSite(row.website as string);
+      const status = found ? await verifyEmail(found).catch(() => "unverified" as const) : "unverified";
+      await supa
+        .from("ph_partners")
+        .update({
+          ...(found ? { email: found, email_status: status } : {}),
+          enrichment: { ...((row.enrichment as Record<string, unknown>) ?? {}), email_hunted: true },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", row.id);
+    } catch (e) {
+      console.warn(`enrich(emailhunt): failed for ${row.business_name}: ${(e as Error).message}`);
+    }
+  }
+
   // Re-verify pass: partners that got through classification while email
   // verification was unavailable (e.g. missing API key) stay 'unverified';
   // pick them up here so a later run can heal them.
