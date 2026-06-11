@@ -83,11 +83,23 @@ Classify this business.`,
       });
 
       let email = (c.contact_email ?? partner.email)?.trim().toLowerCase() || null;
-      // Sites rarely publish emails on the homepage Claude saw — hunt the
-      // contact/about pages directly before giving up on mailability.
+      let huntedName: string | null = null;
+      // Email ladder: site-claimed → contact-page hunt (free) → Hunter (1 credit).
       if (!email && partner.website) {
         const { findEmailOnSite } = await import("@/lib/email-hunt");
         email = await findEmailOnSite(partner.website);
+        if (!email) {
+          try {
+            const { hunterDomainSearch } = await import("@/lib/hunter");
+            const hit = await hunterDomainSearch(partner.website);
+            if (hit) {
+              email = hit.email;
+              huntedName = hit.contactName;
+            }
+          } catch (e) {
+            console.warn(`enrich(hunter): ${partner.business_name}: ${(e as Error).message}`);
+          }
+        }
       }
       let emailStatus: Partner["email_status"] = "unverified";
       if (email) {
@@ -103,7 +115,7 @@ Classify this business.`,
         .update({
           email,
           email_status: emailStatus,
-          contact_name: c.contact_name ?? partner.contact_name,
+          contact_name: huntedName ?? c.contact_name ?? partner.contact_name,
           offers_aftercare: c.offers_aftercare,
           sells_memorial_products: c.sells_memorial_products,
           enrichment: {
@@ -136,12 +148,22 @@ Classify this business.`,
   for (const row of emailless ?? []) {
     try {
       const { findEmailOnSite } = await import("@/lib/email-hunt");
-      const found = await findEmailOnSite(row.website as string);
+      let found = await findEmailOnSite(row.website as string);
+      let foundName: string | null = null;
+      if (!found) {
+        const { hunterDomainSearch } = await import("@/lib/hunter");
+        const hit = await hunterDomainSearch(row.website as string).catch(() => null);
+        if (hit) {
+          found = hit.email;
+          foundName = hit.contactName;
+        }
+      }
       const status = found ? await verifyEmail(found).catch(() => "unverified" as const) : "unverified";
       await supa
         .from("ph_partners")
         .update({
           ...(found ? { email: found, email_status: status } : {}),
+          ...(foundName ? { contact_name: foundName } : {}),
           enrichment: { ...((row.enrichment as Record<string, unknown>) ?? {}), email_hunted: true },
           updated_at: new Date().toISOString(),
         })
