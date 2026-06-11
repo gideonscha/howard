@@ -17,5 +17,7 @@ export async function gateSend(
     email,
     dry_run: true,
   });
+  const { logActivity } = await import("./activity");
+  await logActivity("send", `DRY-RUN — would send to ${email} (kill-switch off)`);
   return { allowed: false };
 }

@@ -51,6 +51,11 @@ export async function POST(req: NextRequest) {
   // for domain reputation on the Health view.
   if (event.event_type === "message.bounced" || event.event_type === "message.complained") {
     const info = event.bounce ?? event.complaint;
+    const { logActivity } = await import("@/lib/activity");
+    await logActivity(
+      "suppression",
+      `${event.event_type} — ${(info?.recipients ?? []).join(", ") || "unknown recipient"}`
+    );
     for (const recipient of info?.recipients ?? []) {
       await supa.from("ph_suppression").insert({
         email: recipient.toLowerCase(),

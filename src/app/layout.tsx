@@ -28,6 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/samples">Samples</Link>
             <Link href="/performance">Performance</Link>
             <Link href="/health">Health</Link>
+            <Link href="/activity">Activity</Link>
             <Link href="/run">Run</Link>
           </nav>
           <span className={live ? "pill pill-live" : "pill pill-dark"}>

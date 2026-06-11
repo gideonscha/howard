@@ -108,6 +108,8 @@ export async function runAutopilot(): Promise<Record<string, unknown>> {
     value: JSON.stringify({ at: new Date().toISOString(), ...summary }, null, 2),
     updated_at: new Date().toISOString(),
   });
+  const { logActivity } = await import("@/lib/activity");
+  await logActivity("autopilot", `autopilot cycle — warehouse ${summary.warehouse}`, summary);
   await setProgress("autopilot: ✅ finished");
   return summary;
 }

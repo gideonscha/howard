@@ -62,11 +62,14 @@ export async function runStageAction(formData: FormData) {
   await setProgress(`${stage}: started…`);
   waitUntil(
     (async () => {
+      const { logActivity } = await import("@/lib/activity");
       let result: unknown;
       try {
         result = await execute();
+        await logActivity("run", `manual ${stage} finished`, result);
       } catch (e) {
         result = { error: (e as Error).message };
+        await logActivity("error", `manual ${stage} failed: ${(e as Error).message}`);
       }
       await db()
         .from("ph_config")

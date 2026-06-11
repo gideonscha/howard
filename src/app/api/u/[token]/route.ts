@@ -12,6 +12,8 @@ async function unsubscribe(token: string): Promise<NextResponse> {
   if (error && !error.message.includes("duplicate")) {
     console.error("unsubscribe insert failed:", error.message);
   }
+  const { logActivity } = await import("@/lib/activity");
+  await logActivity("suppression", `unsubscribe click — ${email}`);
   const { data: partners } = await supa
     .from("ph_partners")
     .select("id")

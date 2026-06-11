@@ -91,6 +91,8 @@ export async function runSend(): Promise<{ sent: number; dryRun: number; skipped
           .eq("id", partner.id);
       }
       await supa.from("ph_send_log").insert({ outreach_id: row.id, email, dry_run: false });
+      const { logActivity } = await import("@/lib/activity");
+      await logActivity("send", `sent touch #${row.touch_number} to ${partner.business_name} <${email}>`);
       sent++;
     } catch (e) {
       console.error(`send: failed for outreach ${row.id}: ${(e as Error).message}`);

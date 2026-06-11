@@ -100,6 +100,13 @@ ${opts.replyText.slice(0, 6000)}
     triage = { category: "other", shipping_address: null, suggested_reply: null };
   }
 
+  const { logActivity } = await import("@/lib/activity");
+  await logActivity(
+    "inbound",
+    `reply from ${opts.partner.business_name} — triaged as ${triage.category}`,
+    { snippet: opts.snippet.slice(0, 200) }
+  );
+
   if (triage.category === "unsubscribe_request" || triage.category === "not_interested") {
     await supa.from("ph_suppression").insert({
       email: opts.fromEmail.toLowerCase(),
