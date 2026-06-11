@@ -1,6 +1,7 @@
 import { db } from "@/lib/supabase";
 import { dailySendCap, sendingEnabled } from "@/lib/env";
 import { AutoRefresh } from "@/app/run/refresh";
+import { ActivityFeed } from "@/app/activity/feed";
 
 export const dynamic = "force-dynamic";
 
@@ -213,6 +214,8 @@ export default async function MetricsPage() {
     <>
       <AutoRefresh seconds={5} />
       <h1>Metrics</h1>
+
+      <ActivityFeed limit={12} compact />
 
       <div className="card">
         <div className="row">
