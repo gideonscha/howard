@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 800;
 
 const STAGES: { stage: string; label: string; paramHint?: string; defaultParam?: string }[] = [
+  { stage: "pipeline", label: "▶ Full pipeline (discover→enrich→score→draft)" },
   { stage: "discover", label: "Discover", paramHint: "source: iaopcc | gateway | lapoflove", defaultParam: "iaopcc" },
   { stage: "enrich", label: "Enrich", paramHint: "limit", defaultParam: "10" },
   { stage: "score", label: "Score" },
@@ -19,10 +20,19 @@ const STAGES: { stage: string; label: string; paramHint?: string; defaultParam?:
 // Manual stage runner. Stages run in the background; this page live-refreshes
 // with progress and the final result.
 export default async function RunPage() {
-  const [progress, { data: last }] = await Promise.all([
-    getProgress(),
-    db().from("ph_config").select("value").eq("key", "_last_run_result").maybeSingle(),
-  ]);
+  const [progress, { data: last }, { data: apLast }, { count: warehouse }, { data: targetRow }] =
+    await Promise.all([
+      getProgress(),
+      db().from("ph_config").select("value").eq("key", "_last_run_result").maybeSingle(),
+      db().from("ph_config").select("value").eq("key", "_autopilot_last").maybeSingle(),
+      db()
+        .from("ph_partners")
+        .select("id", { count: "exact", head: true })
+        .in("stage", ["qualified", "queued", "contacted", "replied", "negotiating", "signed", "live"])
+        .or("email_status.eq.verified,fit_score.gte.60"),
+      db().from("ph_config").select("value").eq("key", "prospect_target").maybeSingle(),
+    ]);
+  const target = Number(targetRow?.value) || 2000;
 
   const running = progress && !progress.text.includes("✅");
   const ageSec = progress ? Math.round((Date.now() - new Date(progress.at).getTime()) / 1000) : null;
@@ -68,6 +78,21 @@ export default async function RunPage() {
           {s.paramHint && <span className="small muted">{s.paramHint}</span>}
         </form>
       ))}
+
+      <h2>Autopilot</h2>
+      <div className="card">
+        <div className="row">
+          <strong>Warehouse: {warehouse ?? 0} / {target}</strong>
+          <span className="pill pill-stage">runs hourly with the cron tick</span>
+        </div>
+        <p className="muted small">
+          Each hour: discover a slice (rotating source, daily credit budget) → enrich → score →
+          top up the draft pile. List-building only — sending stays approval-gated and behind the
+          kill-switch. Tune via ph_config: prospect_target, autopilot_daily_credits,
+          autopilot_enrich_per_tick, draft_queue_floor, autopilot_enabled.
+        </p>
+        {apLast?.value && <div className="email-body small">{apLast.value}</div>}
+      </div>
 
       <h2>Last run result</h2>
       {last?.value ? (

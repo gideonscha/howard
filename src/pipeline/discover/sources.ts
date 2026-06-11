@@ -138,8 +138,15 @@ export async function discoverIaopcc(budget: CreditBudget): Promise<SourcedPartn
     "Extract the pet cemetery / crematory business on this member profile page: business name, city, US state (2-letter), phone, website URL, and contact email if shown. ONLY extract businesses located in the United States — skip UK/Canada/other countries entirely. The website must be the business's own site; never use iaopc.com URLs as the website.";
 
   const { setProgress } = await import("@/lib/progress");
+  // Time-box the run: the Claude extraction path costs no Firecrawl credits,
+  // so the credit budget can't bound it — the clock does. Resumable next run.
+  const deadline = Date.now() + 180_000;
   let i = 0;
   for (const link of memberLinks) {
+    if (Date.now() > deadline) {
+      console.log(`iaopcc: time-boxed at ${i}/${memberLinks.length}; will resume next run`);
+      break;
+    }
     i++;
     if (i % 5 === 1) {
       await setProgress(

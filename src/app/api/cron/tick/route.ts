@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { runSend } from "@/pipeline/send";
 import { runFollowup } from "@/pipeline/followup";
 import { runAttribute } from "@/pipeline/attribute";
+import { runAutopilot } from "@/pipeline/autopilot";
 
-export const maxDuration = 300;
+export const maxDuration = 800;
 
-// Single hourly dispatcher (Pro plan). Sends are paced naturally: the daily
-// cap is shared across hourly invocations, so approved mail trickles out
-// rather than blasting at midnight. Attribution runs once a day (06:00 UTC).
+// Single hourly dispatcher (Pro plan). Order: send first (cap-bound and
+// time-sensitive), then the prospecting autopilot (discover→enrich→score→
+// draft top-up), then daily attribution at 06:00 UTC. Sends pace naturally:
+// the daily cap is shared across hourly invocations.
 export async function GET(req: NextRequest) {
   const auth = req.headers.get("authorization");
   if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -24,6 +26,11 @@ export async function GET(req: NextRequest) {
     results.followup = await runFollowup();
   } catch (e) {
     results.followup = { error: (e as Error).message };
+  }
+  try {
+    results.autopilot = await runAutopilot();
+  } catch (e) {
+    results.autopilot = { error: (e as Error).message };
   }
   if (new Date().getUTCHours() === 6) {
     try {

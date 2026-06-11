@@ -15,7 +15,10 @@ function normalizeDomain(url: string | undefined): string | null {
 
 // Source one bounded slice. Dedupes against ph_partners (by website domain and
 // by name+city) and ph_suppression before inserting as stage='sourced'.
-export async function runDiscover(sourceName?: string): Promise<{
+export async function runDiscover(
+  sourceName?: string,
+  creditLimit?: number
+): Promise<{
   source: string;
   found: number;
   inserted: number;
@@ -23,7 +26,9 @@ export async function runDiscover(sourceName?: string): Promise<{
   creditsSpent: number;
 }> {
   const name = sourceName && SOURCES[sourceName] ? sourceName : "iaopcc";
-  const budget = new CreditBudget(Number(process.env.FIRECRAWL_RUN_CREDIT_BUDGET ?? 1000));
+  const budget = new CreditBudget(
+    creditLimit ?? Number(process.env.FIRECRAWL_RUN_CREDIT_BUDGET ?? 1000)
+  );
   const found = await SOURCES[name](budget);
 
   const supa = db();

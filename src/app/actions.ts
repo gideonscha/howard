@@ -35,6 +35,11 @@ export async function runStageAction(formData: FormData) {
 
   const execute = async () => {
     switch (stage) {
+      case "pipeline": {
+        // One-tap full pass: discover → enrich → score → draft top-up.
+        const { runAutopilot } = await import("@/pipeline/autopilot");
+        return runAutopilot();
+      }
       case "discover":
         return runDiscover(param || undefined);
       case "enrich":
