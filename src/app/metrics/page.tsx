@@ -1,0 +1,300 @@
+import { db } from "@/lib/supabase";
+import { dailySendCap, sendingEnabled } from "@/lib/env";
+import { AutoRefresh } from "@/app/run/refresh";
+
+export const dynamic = "force-dynamic";
+
+const STAGES = [
+  "sourced",
+  "qualified",
+  "queued",
+  "contacted",
+  "replied",
+  "negotiating",
+  "signed",
+  "live",
+] as const;
+
+const EMAIL_COLORS: Record<string, string> = {
+  verified: "#1a7f4b",
+  risky: "#b8860b",
+  invalid: "#b42318",
+  unverified: "#9ca3af",
+};
+
+function dayKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function lastNDays(n: number): string[] {
+  const out: string[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - i);
+    out.push(dayKey(d));
+  }
+  return out;
+}
+
+// Inline SVG bar chart: one group per day, up to two series.
+function Bars({
+  days,
+  series,
+}: {
+  days: string[];
+  series: { label: string; color: string; values: number[] }[];
+}) {
+  const w = 700;
+  const h = 120;
+  const max = Math.max(1, ...series.flatMap((s) => s.values));
+  const groupW = w / days.length;
+  const barW = Math.max(2, groupW / (series.length + 1));
+  return (
+    <svg viewBox={`0 0 ${w} ${h + 18}`} style={{ width: "100%", height: "auto" }}>
+      {days.map((d, i) =>
+        series.map((s, j) => {
+          const v = s.values[i];
+          const bh = (v / max) * h;
+          return (
+            <rect
+              key={`${d}-${j}`}
+              x={i * groupW + j * barW + 2}
+              y={h - bh}
+              width={barW - 1}
+              height={bh}
+              rx={1.5}
+              fill={s.color}
+            >
+              <title>{`${d}: ${v} ${s.label}`}</title>
+            </rect>
+          );
+        })
+      )}
+      {days.map((d, i) =>
+        i % 2 === 0 ? (
+          <text key={d} x={i * groupW + groupW / 2} y={h + 14} fontSize="9" fill="#6b7280" textAnchor="middle">
+            {d.slice(5)}
+          </text>
+        ) : null
+      )}
+    </svg>
+  );
+}
+
+function Donut({ parts }: { parts: { label: string; value: number; color: string }[] }) {
+  const total = Math.max(
+    1,
+    parts.reduce((s, p) => s + p.value, 0)
+  );
+  const r = 42;
+  const c = 2 * Math.PI * r;
+  let offset = 0;
+  return (
+    <svg viewBox="0 0 120 120" style={{ width: 140, height: 140 }}>
+      {parts.map((p) => {
+        const frac = p.value / total;
+        const seg = (
+          <circle
+            key={p.label}
+            cx="60"
+            cy="60"
+            r={r}
+            fill="none"
+            stroke={p.color}
+            strokeWidth="16"
+            strokeDasharray={`${frac * c} ${c}`}
+            strokeDashoffset={-offset}
+            transform="rotate(-90 60 60)"
+          >
+            <title>{`${p.label}: ${p.value}`}</title>
+          </circle>
+        );
+        offset += frac * c;
+        return seg;
+      })}
+      <text x="60" y="64" textAnchor="middle" fontSize="18" fontWeight="700" fill="#1f2328">
+        {total}
+      </text>
+    </svg>
+  );
+}
+
+function HBar({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "4px 0" }}>
+      <span className="small" style={{ width: 110, textAlign: "right" }}>{label}</span>
+      <div style={{ flex: 1, background: "#f0ede6", borderRadius: 4, height: 18 }}>
+        <div
+          style={{
+            width: `${max ? Math.max(value > 0 ? 2 : 0, (value / max) * 100) : 0}%`,
+            background: color,
+            height: 18,
+            borderRadius: 4,
+          }}
+        />
+      </div>
+      <span className="small" style={{ width: 36 }}>{value}</span>
+    </div>
+  );
+}
+
+export default async function MetricsPage() {
+  const supa = db();
+  const since14 = new Date();
+  since14.setUTCDate(since14.getUTCDate() - 13);
+  since14.setUTCHours(0, 0, 0, 0);
+  const midnight = new Date();
+  midnight.setUTCHours(0, 0, 0, 0);
+
+  const [
+    { data: partners },
+    { data: sendLog },
+    { data: referrals },
+    { count: suppression },
+    { count: draftsPending },
+    { count: needsAttention },
+    { data: targetRow },
+  ] = await Promise.all([
+    supa.from("ph_partners").select("stage,segment,email_status,fit_score,source,sample_status,created_at"),
+    supa.from("ph_send_log").select("dry_run,sent_at").gte("sent_at", since14.toISOString()),
+    supa.from("ph_referrals").select("orders_count,revenue"),
+    supa.from("ph_suppression").select("id", { count: "exact", head: true }),
+    supa.from("ph_outreach").select("id", { count: "exact", head: true }).eq("status", "draft"),
+    supa.from("ph_outreach").select("id", { count: "exact", head: true }).eq("needs_attention", true),
+    supa.from("ph_config").select("value").eq("key", "prospect_target").maybeSingle(),
+  ]);
+
+  const ps = partners ?? [];
+  const target = Number(targetRow?.value) || 2000;
+
+  const warehouse = ps.filter(
+    (p) =>
+      ["qualified", "queued", "contacted", "replied", "negotiating", "signed", "live"].includes(p.stage) &&
+      (p.email_status === "verified" || (p.fit_score ?? 0) >= 60)
+  ).length;
+
+  const stageCounts = Object.fromEntries(STAGES.map((s) => [s, 0])) as Record<string, number>;
+  for (const p of ps) if (p.stage in stageCounts) stageCounts[p.stage]++;
+  const stageMax = Math.max(1, ...Object.values(stageCounts));
+
+  const emailParts = Object.entries(EMAIL_COLORS).map(([label, color]) => ({
+    label,
+    color,
+    value: ps.filter((p) => p.email_status === label).length,
+  }));
+
+  const sourceCounts = new Map<string, number>();
+  for (const p of ps) {
+    const key = (p.source ?? "unknown").split(":")[0];
+    sourceCounts.set(key, (sourceCounts.get(key) ?? 0) + 1);
+  }
+  const sourceMax = Math.max(1, ...sourceCounts.values());
+
+  const days = lastNDays(14);
+  const partnersPerDay = days.map((d) => ps.filter((p) => (p.created_at ?? "").slice(0, 10) === d).length);
+  const sentPerDay = days.map(
+    (d) => (sendLog ?? []).filter((l) => !l.dry_run && l.sent_at.slice(0, 10) === d).length
+  );
+  const dryPerDay = days.map(
+    (d) => (sendLog ?? []).filter((l) => l.dry_run && l.sent_at.slice(0, 10) === d).length
+  );
+
+  const sentToday = (sendLog ?? []).filter((l) => !l.dry_run && l.sent_at >= midnight.toISOString()).length;
+  const replies = ps.filter((p) => ["replied", "negotiating", "signed", "live"].includes(p.stage)).length;
+  const contacted = ps.filter((p) =>
+    ["contacted", "replied", "negotiating", "signed", "live"].includes(p.stage)
+  ).length;
+  const samples = ps.filter((p) => !["none", "offered"].includes(p.sample_status)).length;
+  const orders = (referrals ?? []).reduce((s, r) => s + Number(r.orders_count), 0);
+  const revenue = (referrals ?? []).reduce((s, r) => s + Number(r.revenue), 0);
+  const pct = Math.min(100, Math.round((warehouse / target) * 100));
+
+  return (
+    <>
+      <AutoRefresh seconds={5} />
+      <h1>Metrics</h1>
+
+      <div className="card">
+        <div className="row">
+          <strong>Prospect warehouse</strong>
+          <span className="pill pill-stage">{warehouse} / {target} ({pct}%)</span>
+          <span className={sendingEnabled() ? "pill pill-live" : "pill pill-dark"}>
+            {sendingEnabled() ? "SENDING LIVE" : "SENDING OFF"}
+          </span>
+        </div>
+        <div style={{ background: "#f0ede6", borderRadius: 6, height: 22, marginTop: 8 }}>
+          <div
+            style={{
+              width: `${Math.max(pct, 1)}%`,
+              background: "linear-gradient(90deg,#8a5a44,#b07a5e)",
+              height: 22,
+              borderRadius: 6,
+            }}
+          />
+        </div>
+      </div>
+
+      <div className="statgrid">
+        <div className="stat"><div className="v">{ps.length}</div><div className="l">partners total</div></div>
+        <div className="stat"><div className="v">{draftsPending ?? 0}</div><div className="l">drafts awaiting approval</div></div>
+        <div className="stat"><div className="v">{needsAttention ?? 0}</div><div className="l">need attention</div></div>
+        <div className="stat"><div className="v">{sentToday}/{dailySendCap()}</div><div className="l">sent today / cap</div></div>
+        <div className="stat"><div className="v">{contacted}</div><div className="l">contacted</div></div>
+        <div className="stat"><div className="v">{replies}</div><div className="l">replied+</div></div>
+        <div className="stat"><div className="v">{samples}</div><div className="l">sample requests</div></div>
+        <div className="stat"><div className="v">{suppression ?? 0}</div><div className="l">suppressed</div></div>
+        <div className="stat"><div className="v">{orders}</div><div className="l">attributed orders</div></div>
+        <div className="stat"><div className="v">${revenue.toFixed(0)}</div><div className="l">attributed revenue</div></div>
+      </div>
+
+      <div className="card">
+        <h2 style={{ marginTop: 0 }}>Pipeline funnel</h2>
+        {STAGES.map((s) => (
+          <HBar key={s} label={s} value={stageCounts[s]} max={stageMax} color="#8a5a44" />
+        ))}
+      </div>
+
+      <div className="card">
+        <h2 style={{ marginTop: 0 }}>New partners per day (14d)</h2>
+        <Bars days={days} series={[{ label: "added", color: "#8a5a44", values: partnersPerDay }]} />
+      </div>
+
+      <div className="card">
+        <h2 style={{ marginTop: 0 }}>Sends per day (14d)</h2>
+        <Bars
+          days={days}
+          series={[
+            { label: "sent", color: "#1a7f4b", values: sentPerDay },
+            { label: "dry-run", color: "#9ca3af", values: dryPerDay },
+          ]}
+        />
+        <p className="small muted">
+          <span style={{ color: "#1a7f4b" }}>■</span> real sends&nbsp;&nbsp;
+          <span style={{ color: "#9ca3af" }}>■</span> dry-runs (kill-switch off)
+        </p>
+      </div>
+
+      <div className="row" style={{ alignItems: "stretch" }}>
+        <div className="card" style={{ flex: 1, minWidth: 220 }}>
+          <h2 style={{ marginTop: 0 }}>Email quality</h2>
+          <div className="row">
+            <Donut parts={emailParts} />
+            <div>
+              {emailParts.map((p) => (
+                <p key={p.label} className="small" style={{ margin: "2px 0" }}>
+                  <span style={{ color: p.color }}>■</span> {p.label}: {p.value}
+                </p>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="card" style={{ flex: 1, minWidth: 220 }}>
+          <h2 style={{ marginTop: 0 }}>By source</h2>
+          {[...sourceCounts.entries()].map(([s, v]) => (
+            <HBar key={s} label={s} value={v} max={sourceMax} color="#5b7a8a" />
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}

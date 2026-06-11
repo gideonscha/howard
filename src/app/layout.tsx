@@ -24,6 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
           <nav>
             <Link href="/">Queue</Link>
+            <Link href="/metrics">Metrics</Link>
             <Link href="/pipeline">Pipeline</Link>
             <Link href="/samples">Samples</Link>
             <Link href="/performance">Performance</Link>
