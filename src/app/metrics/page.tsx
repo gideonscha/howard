@@ -239,6 +239,12 @@ export default async function MetricsPage() {
 
       <div className="statgrid">
         <div className="stat"><div className="v">{ps.length}</div><div className="l">partners total</div></div>
+        <div className="stat">
+          <div className="v" style={{ color: "#1a7f4b" }}>
+            {ps.filter((p) => p.email_status === "verified" && p.stage !== "declined").length}
+          </div>
+          <div className="l">verified emails (sendable)</div>
+        </div>
         <div className="stat"><div className="v">{draftsPending ?? 0}</div><div className="l">drafts awaiting approval</div></div>
         <div className="stat"><div className="v">{needsAttention ?? 0}</div><div className="l">need attention</div></div>
         <div className="stat"><div className="v">{sentToday}/{dailySendCap()}</div><div className="l">sent today / cap</div></div>
