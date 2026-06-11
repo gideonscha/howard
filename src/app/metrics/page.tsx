@@ -255,6 +255,16 @@ export default async function MetricsPage() {
         {STAGES.map((s) => (
           <HBar key={s} label={s} value={stageCounts[s]} max={stageMax} color="#8a5a44" />
         ))}
+        <HBar
+          label="declined"
+          value={ps.filter((p) => p.stage === "declined").length}
+          max={stageMax}
+          color="#c9c4ba"
+        />
+        <p className="small muted" style={{ marginBottom: 0 }}>
+          sourced/qualified are transient — the hourly cycle promotes them to queued within
+          minutes. declined = filtered out (non-US, suppliers, unsubscribes).
+        </p>
       </div>
 
       <div className="card">
