@@ -36,6 +36,8 @@ export interface SourcedPartner extends ExtractedBusiness {
   segment: "memorial" | "vet";
   subtype: string;
   is_chain: boolean;
+  rating?: number;
+  reviews_count?: number;
 }
 
 // Some directory sites 403 generic fetchers but allow a plain browser UA;
@@ -300,4 +302,8 @@ export const SOURCES: Record<string, (b: CreditBudget) => Promise<SourcedPartner
   iaopcc: discoverIaopcc,
   gateway: discoverGateway,
   lapoflove: discoverLapOfLove,
+  places: async () => {
+    const { discoverPlaces } = await import("./places");
+    return discoverPlaces();
+  },
 };

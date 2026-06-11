@@ -8,7 +8,7 @@ export const maxDuration = 800;
 
 const STAGES: { stage: string; label: string; paramHint?: string; defaultParam?: string }[] = [
   { stage: "pipeline", label: "▶ Full pipeline (discover→enrich→score→draft)" },
-  { stage: "discover", label: "Discover", paramHint: "source: iaopcc | gateway | lapoflove", defaultParam: "iaopcc" },
+  { stage: "discover", label: "Discover", paramHint: "source: places | iaopcc | gateway | lapoflove", defaultParam: "places" },
   { stage: "enrich", label: "Enrich", paramHint: "limit", defaultParam: "10" },
   { stage: "score", label: "Score" },
   { stage: "draft", label: "Draft", paramHint: "limit", defaultParam: "5" },

@@ -88,6 +88,8 @@ export async function runDiscover(
       phone: clean(p.phone),
       source: p.source,
       is_chain: p.is_chain,
+      rating: p.rating ?? null,
+      reviews_count: p.reviews_count ?? null,
       stage: "sourced",
     });
     if (error) {

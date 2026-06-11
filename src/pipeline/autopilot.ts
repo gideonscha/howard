@@ -16,7 +16,9 @@ import { runDraft } from "./draft";
 //   autopilot_enrich_per_tick                        (default 15)
 //   draft_queue_floor        drafts kept pending     (default 10)
 
-const SOURCE_ROTATION = ["iaopcc", "gateway", "lapoflove"];
+// Places is the volume source — it gets every other slot in the rotation;
+// the scrape sources fill the remaining hours until they exhaust.
+const SOURCE_ROTATION = ["places", "iaopcc", "places", "gateway", "places", "lapoflove"];
 
 function num(v: string | undefined, fallback: number): number {
   const n = Number(v);
