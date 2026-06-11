@@ -84,10 +84,12 @@ Classify this business.`,
 
       let email = (c.contact_email ?? partner.email)?.trim().toLowerCase() || null;
       let huntedName: string | null = null;
+      let emailSource: string | null = email ? "site" : null;
       // Email ladder: site-claimed → contact-page hunt (free) → Hunter (1 credit).
       if (!email && partner.website) {
         const { findEmailOnSite } = await import("@/lib/email-hunt");
         email = await findEmailOnSite(partner.website);
+        if (email) emailSource = "contact_page";
         if (!email) {
           try {
             const { hunterDomainSearch } = await import("@/lib/hunter");
@@ -95,6 +97,7 @@ Classify this business.`,
             if (hit) {
               email = hit.email;
               huntedName = hit.contactName;
+              emailSource = "hunter";
             }
           } catch (e) {
             console.warn(`enrich(hunter): ${partner.business_name}: ${(e as Error).message}`);
@@ -121,6 +124,7 @@ Classify this business.`,
           enrichment: {
             business_detail: c.business_detail,
             disqualify_reason: c.disqualify_reason,
+            email_source: emailSource,
             // invalid email → manual touch via contact form / phone, not deletion
             needs_manual_contact: !email || emailStatus === "invalid",
           },
@@ -150,12 +154,14 @@ Classify this business.`,
       const { findEmailOnSite } = await import("@/lib/email-hunt");
       let found = await findEmailOnSite(row.website as string);
       let foundName: string | null = null;
+      let foundSource: string | null = found ? "contact_page" : null;
       if (!found) {
         const { hunterDomainSearch } = await import("@/lib/hunter");
         const hit = await hunterDomainSearch(row.website as string).catch(() => null);
         if (hit) {
           found = hit.email;
           foundName = hit.contactName;
+          foundSource = "hunter";
         }
       }
       const status = found ? await verifyEmail(found).catch(() => "unverified" as const) : "unverified";
@@ -164,7 +170,11 @@ Classify this business.`,
         .update({
           ...(found ? { email: found, email_status: status } : {}),
           ...(foundName ? { contact_name: foundName } : {}),
-          enrichment: { ...((row.enrichment as Record<string, unknown>) ?? {}), email_hunted: true },
+          enrichment: {
+            ...((row.enrichment as Record<string, unknown>) ?? {}),
+            email_hunted: true,
+            ...(foundSource ? { email_source: foundSource } : {}),
+          },
           updated_at: new Date().toISOString(),
         })
         .eq("id", row.id);
