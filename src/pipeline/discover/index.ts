@@ -2,6 +2,12 @@ import { CreditBudget } from "@/lib/firecrawl";
 import { db } from "@/lib/supabase";
 import { SOURCES, SourcedPartner } from "./sources";
 
+const US_STATES = new Set([
+  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA",
+  "ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK",
+  "OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC",
+]);
+
 function normalizeDomain(url: string | undefined): string | null {
   if (!url) return null;
   try {
@@ -63,13 +69,20 @@ export async function runDiscover(
       const t = s?.trim();
       return t ? t : null;
     };
+    // Hard US-only filter — prompts alone don't hold (a UK member slipped
+    // through twice). Unknown state is allowed; a known non-US state is not.
+    const state = clean(p.state)?.toUpperCase() ?? null;
+    if (state && !US_STATES.has(state)) {
+      skipped++;
+      continue;
+    }
     const website = clean(p.website);
     const { error } = await supa.from("ph_partners").insert({
       business_name: p.business_name,
       segment: p.segment,
       subtype: p.subtype,
       city: clean(p.city),
-      state: clean(p.state)?.toUpperCase() ?? null,
+      state,
       website: website?.includes("iaopc.com") ? null : website,
       email: clean(p.email)?.toLowerCase() ?? null,
       phone: clean(p.phone),

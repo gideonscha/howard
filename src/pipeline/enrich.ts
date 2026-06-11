@@ -70,7 +70,7 @@ export async function runEnrich(limit = 10): Promise<{ processed: number; qualif
 
       const c = await structured<Classification>({
         system:
-          "You qualify US pet-related businesses as referral partners for a premium pet memorial portrait product. Be factual; only mark qualified=false for clear disqualifiers (out of business, not pet-related, human-only services, outside the US).",
+          "You qualify US pet-related businesses as referral partners for a premium pet memorial portrait product. The partner must SERVE GRIEVING PET FAMILIES DIRECTLY (crematory, pet cemetery, aftercare provider, vet with aftercare). Mark qualified=false for: out of business, not pet-related, human-only services, outside the US, and — important — suppliers/manufacturers/vendors that sell products or services TO aftercare businesses rather than to families (urn wholesalers, keepsake manufacturers, body-bag suppliers, software, marketing services, association staff). Be factual.",
         user: `Business: ${partner.business_name} (${partner.city ?? "?"}, ${partner.state ?? "?"})
 Segment guess: ${partner.segment} / ${partner.subtype ?? "?"}
 Known email: ${partner.email ?? "none"}
