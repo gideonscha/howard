@@ -224,7 +224,8 @@ export async function discoverGateway(budget: CreditBudget): Promise<SourcedPart
         if (!b.business_name) continue;
         out.push({
           ...b,
-          website: b.website ?? brandUrl,
+          // extraction returns "" (not null) for missing fields — || not ??
+          website: b.website?.trim() || brandUrl,
           source: `gateway:${brandUrl}`,
           segment: "memorial",
           subtype: "aftercare-consolidator",
