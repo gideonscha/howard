@@ -69,7 +69,9 @@ function orgKey(p: { website: string | null; email: string | null; id: string })
 // Personalised first touch per partner → ph_outreach status='draft'. Never sends.
 // Opener is personalised; the offer block is fixed and identical; one outreach
 // per organisation (chains deduped); the CTA link is wrapped for click tracking.
-export async function runDraft(limit = 5): Promise<{ drafted: number }> {
+export async function runDraft(
+  limit = 5
+): Promise<{ drafted: number; candidates: number; eligible: number; firstError?: string }> {
   const supa = db();
   const config = await getConfig();
   const offer = offerConfig(config);
@@ -118,6 +120,7 @@ export async function runDraft(limit = 5): Promise<{ drafted: number }> {
   const deadline = Date.now() + 6 * 60_000;
   const usedSubjects: string[] = [];
   let drafted = 0;
+  let firstError: string | undefined;
   let i = 0;
   for (const p of fresh) {
     if (Date.now() > deadline) {
@@ -165,8 +168,9 @@ Specific detail to open with: ${detail}`,
       usedSubjects.push(subject);
       drafted++;
     } catch (e) {
+      if (!firstError) firstError = `${p.business_name}: ${(e as Error).message}`;
       console.error(`draft: failed for ${p.id}: ${(e as Error).message}`);
     }
   }
-  return { drafted };
+  return { drafted, candidates: partners?.length ?? 0, eligible: fresh.length, firstError };
 }
