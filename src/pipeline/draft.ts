@@ -76,32 +76,35 @@ export async function runDraft(limit = 5): Promise<{ drafted: number }> {
   const block = offerBlock(offer);
   const base = publicBaseUrl();
 
-  // Org keys already taken by any existing outreach (so chains/repeats are skipped).
-  const { data: outreached } = await supa
-    .from("ph_outreach")
-    .select("ph_partners(id,website,email)");
+  // Partner IDs that already have any outreach (so we draft each org once).
+  const { data: outreachRows } = await supa.from("ph_outreach").select("partner_id");
+  const partnersWithOutreach = new Set((outreachRows ?? []).map((r) => r.partner_id));
+
+  // Org keys already taken by existing outreach (collapse chains/repeats).
   const takenOrgKeys = new Set<string>();
-  type JoinRow = { ph_partners: { id: string; website: string | null; email: string | null } | { id: string; website: string | null; email: string | null }[] | null };
-  for (const row of (outreached ?? []) as unknown as JoinRow[]) {
-    const j = row.ph_partners;
-    const partner = Array.isArray(j) ? j[0] : j;
-    if (partner) takenOrgKeys.add(orgKey(partner));
+  if (partnersWithOutreach.size > 0) {
+    const { data: takenPartners } = await supa
+      .from("ph_partners")
+      .select("id,website,email")
+      .in("id", [...partnersWithOutreach]);
+    for (const tp of takenPartners ?? []) takenOrgKeys.add(orgKey(tp));
   }
 
-  // Candidates: top of the scored queue, verified email, no own outreach.
+  // Candidates: top of the scored queue, verified email.
   const { data: partners, error } = await supa
     .from("ph_partners")
-    .select("*, ph_outreach(id)")
+    .select("*")
     .eq("stage", "queued")
     .eq("email_status", "verified")
-    .order("fit_score", { ascending: false })
+    .order("fit_score", { ascending: false, nullsFirst: false })
     .limit(limit * 6);
   if (error) throw error;
+  console.log(`draft: ${partners?.length ?? 0} candidates, ${partnersWithOutreach.size} already have outreach`);
 
   const seenOrgKeys = new Set<string>(takenOrgKeys);
   const fresh: Partner[] = [];
-  for (const p of (partners ?? []) as (Partner & { ph_outreach: { id: string }[] })[]) {
-    if (p.ph_outreach.length > 0) continue;
+  for (const p of (partners ?? []) as Partner[]) {
+    if (partnersWithOutreach.has(p.id)) continue; // already drafted/contacted
     const key = orgKey(p);
     if (seenOrgKeys.has(key)) continue; // one outreach per organisation
     seenOrgKeys.add(key);
@@ -150,7 +153,7 @@ Specific detail to open with: ${detail}`,
       const wrapped = `${base}/c/${clickToken(id)}`;
       const body = `${d.opener.trim()}\n\n${block}\n\n${d.closer.trim()} ${wrapped}\n\nHoward\nMagic Portraits`;
 
-      await supa.from("ph_outreach").insert({
+      const { error: insErr } = await supa.from("ph_outreach").insert({
         id,
         partner_id: p.id,
         touch_number: 1,
@@ -158,6 +161,7 @@ Specific detail to open with: ${detail}`,
         body,
         status: "draft",
       });
+      if (insErr) throw new Error(`insert: ${insErr.message}`);
       usedSubjects.push(subject);
       drafted++;
     } catch (e) {
