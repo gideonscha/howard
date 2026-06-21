@@ -16,9 +16,10 @@ import { runDraft } from "./draft";
 //   autopilot_enrich_per_tick                        (default 15)
 //   draft_queue_floor        drafts kept pending     (default 10)
 
-// Places is the volume source — it gets every other slot in the rotation;
-// the scrape sources fill the remaining hours until they exhaust.
-const SOURCE_ROTATION = ["places", "iaopcc", "places", "gateway", "places", "lapoflove"];
+// Places is the volume source — it gets most of the rotation. The scrape
+// sources are exhausted (return only dupes), so they get one slot each as a
+// cheap re-check; lapoflove dropped entirely (returned 0 for days).
+const SOURCE_ROTATION = ["places", "places", "iaopcc", "places", "places", "gateway"];
 
 function num(v: string | undefined, fallback: number): number {
   const n = Number(v);

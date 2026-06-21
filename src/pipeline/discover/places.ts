@@ -16,10 +16,20 @@ const STATES = [
   "Virginia","Washington","West Virginia","Wisconsin","Wyoming",
 ];
 
+// Broadened query set — different businesses surface under different
+// phrasings. Sweep generation bumped so the cursor re-runs all states;
+// dedupe drops anything the first sweep already caught.
 const QUERIES = [
   { q: "pet crematory", subtype: "crematory" },
   { q: "pet cremation service", subtype: "crematory" },
   { q: "pet cemetery", subtype: "cemetery" },
+  { q: "pet aquamation", subtype: "crematory" },
+  { q: "animal cremation", subtype: "crematory" },
+  { q: "dog cremation", subtype: "crematory" },
+  { q: "pet funeral home", subtype: "crematory" },
+  { q: "pet memorial service", subtype: "memorial" },
+  { q: "in-home pet euthanasia", subtype: "in-home-euthanasia" },
+  { q: "pet aftercare service", subtype: "aftercare" },
 ];
 
 // (state, query) combos processed per run. 3 combos ≈ one state per run →
