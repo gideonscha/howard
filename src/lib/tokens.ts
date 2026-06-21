@@ -1,12 +1,22 @@
 import { createHmac, timingSafeEqual } from "crypto";
-import { requireEnv } from "./env";
+
+// Stable signing secret for unsubscribe + click tokens. Prefers an explicit
+// UNSUBSCRIBE_SECRET; falls back to other already-set stable secrets so tokens
+// work without an extra env var. Must be stable across deploys (it is — all
+// fallbacks are persistent env vars), and consistent between mint and verify.
+function signingSecret(): string {
+  const s =
+    process.env.UNSUBSCRIBE_SECRET ||
+    process.env.CRON_SECRET ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!s) throw new Error("No signing secret available (set UNSUBSCRIBE_SECRET)");
+  return s;
+}
 
 // Unsubscribe tokens: HMAC(email) so the /api/u/[token] link can't be forged
 // or enumerated. Token format: base64url(email).base64url(hmac).
 function hmac(payload: string): string {
-  return createHmac("sha256", requireEnv("UNSUBSCRIBE_SECRET"))
-    .update(payload)
-    .digest("base64url");
+  return createHmac("sha256", signingSecret()).update(payload).digest("base64url");
 }
 
 export function unsubscribeToken(email: string): string {
