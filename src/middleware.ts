@@ -4,9 +4,10 @@ import { NextRequest, NextResponse } from "next/server";
 //  - /api/cron/* and /api/run/*  → Bearer CRON_SECRET
 //  - /api/webhooks/*             → Svix signature
 //  - /api/u/*                    → HMAC token in the URL (must stay public)
+//  - /c/*                        → wrapped CTA click redirect (must stay public)
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  if (pathname.startsWith("/api/")) return NextResponse.next();
+  if (pathname.startsWith("/api/") || pathname.startsWith("/c/")) return NextResponse.next();
 
   const user = process.env.DASHBOARD_USER;
   const pass = process.env.DASHBOARD_PASSWORD;

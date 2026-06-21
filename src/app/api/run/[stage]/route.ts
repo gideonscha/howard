@@ -43,8 +43,7 @@ export async function POST(
       case "sign": {
         const partnerId = url.searchParams.get("partner_id");
         if (!partnerId) return new NextResponse("partner_id required", { status: 400 });
-        const pct = Number(url.searchParams.get("percentage") ?? 10);
-        return NextResponse.json(await runSign(partnerId, pct));
+        return NextResponse.json(await runSign(partnerId));
       }
       default:
         return new NextResponse(`Unknown stage: ${stage}`, { status: 404 });

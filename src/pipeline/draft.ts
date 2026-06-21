@@ -1,6 +1,8 @@
+import { randomUUID } from "crypto";
 import { structured } from "@/lib/anthropic";
-import { configuredTerms, getConfig } from "@/lib/config";
-import { optionalEnv } from "@/lib/env";
+import { getConfig, HOWARD_PERSONA, offerBlock, offerConfig } from "@/lib/config";
+import { requireEnv } from "@/lib/env";
+import { clickToken } from "@/lib/tokens";
 import { db } from "@/lib/supabase";
 import { Partner } from "./types";
 
@@ -8,63 +10,107 @@ const DRAFT_SCHEMA = {
   type: "object",
   properties: {
     subject: { type: "string" },
-    body: { type: "string" },
+    opener: { type: "string" },
+    closer: { type: "string" },
   },
-  required: ["subject", "body"],
+  required: ["subject", "opener", "closer"],
   additionalProperties: false,
 };
 
-export function howardSystemPrompt(terms: string[]): string {
-  const termsBlock = terms.length
-    ? `Configured offer terms you MAY state concretely:\n${terms.join("\n")}`
-    : `NO offer terms are configured. HARD RULE: never state a specific commission percentage, donation amount, or what the sample set contains. Speak only in structure: "a referral commission", "a donation to a rescue of your choice", "a sample set of Star in Heaven tiles".`;
+export function howardSystemPrompt(usedSubjects: string[]): string {
+  return `${HOWARD_PERSONA}
 
-  return `You are Howard, partner outreach for Magic Portraits — premium AI pet portraits printed on photo tiles. Our memorial theme "Star in Heaven" helps families honor a pet they've lost.
+Return JSON with exactly three fields — subject, opener, closer — and nothing else. The system assembles the full email as: your opener, then a FIXED offer block (which you do NOT write), then your closer followed by a link, then the signature.
 
-You write to two kinds of US partner, both at the end-of-life moment: (1) pet memorial businesses — crematoriums, pet cemeteries, aftercare providers; and (2) veterinary clinics that do euthanasia, hospice, or aftercare. You propose a gift program: a memorial gift they can give every family, at no cost to them, with their name on it.
+subject:
+- Short, specific to THIS business — reference their name or the detail you were given.
+- Must be distinct. Do NOT reuse any of these already-used subjects: ${usedSubjects.length ? usedSubjects.map((s) => `"${s}"`).join(", ") : "(none yet)"}.
 
-Tone rules (memorial context — non-negotiable):
-- Lead with serving THEIR families, never "we want your customers".
-- Warm, brief, human. No marketing-speak, no exclamation points, no "I hope this finds you well".
-- Plain text only. 90–140 words. Sign as "Howard" with "Magic Portraits" beneath.
-- Open with the one specific detail about their business — show you actually looked.
+opener (2–4 sentences):
+- Open with the ONE specific detail about their business — show you actually looked.
+- For vet clinics, lead with the families they comfort when it's time to say goodbye; for memorial businesses, the families they already serve.
+- Then transition warmly to: you'd like to offer something for those families.
+- CRITICAL: do NOT state any numbers, gift, commission, discount, or terms — the system inserts the exact offer immediately after your opener. If you mention terms you will contradict the real offer.
 
-Offer structure:
-- For memorial businesses: a gift for the families they already serve; commission OR donation-to-a-rescue framing, their choice.
-- For vet clinics: lead with the families they comfort when it's time to say goodbye — frame Star in Heaven as a compassionate gesture the practice can offer those families, not a sales product. Same commission-or-donation choice.
-- Crematoriums may also be offered a wholesale/bundle option, mentioned lightly. Do NOT offer wholesale to vet clinics.
+closer (1 short sentence):
+- Invite them to see what their families would receive, leading directly into a link.
+- Do NOT write any URL — the system appends the link after your sentence.
 
-CTA rules:
-- PRIMARY CTA: the self-demo — "upload a photo of your own pet and see what your families would receive; takes 60 seconds, free" with this link: ${optionalEnv("SELF_DEMO_URL", "[self-demo link]")}
-- Secondary beat (one sentence): a free physical sample set of Star in Heaven tiles is available if they'd like to see and hold the real thing.
-- Never ask for a call or meeting in the first touch.
-
-${termsBlock}
-
-Do NOT include any signature footer beyond "Howard\\nMagic Portraits" — the system appends the legal footer automatically.`;
+Tone: warm, brief, human, plain text. No marketing-speak, no exclamation points, no "I hope this finds you well". Vary sentence structure between emails — do not reuse a template skeleton.`;
 }
 
-// Personalised first touch per queued partner → ph_outreach status='draft'. Never sends.
+// Organisation key: collapse multi-location chains to one outreach. Same
+// website domain (or same non-public email domain, or same exact email) = one org.
+const PUBLIC_MAIL = new Set([
+  "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "aol.com",
+  "icloud.com", "me.com", "msn.com", "live.com", "comcast.net",
+]);
+
+function domainOf(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url.startsWith("http") ? url : `https://${url}`).hostname
+      .toLowerCase()
+      .replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+function orgKey(p: { website: string | null; email: string | null; id: string }): string {
+  const wd = domainOf(p.website);
+  if (wd) return `w:${wd}`;
+  const ed = p.email?.split("@")[1]?.toLowerCase();
+  if (ed && !PUBLIC_MAIL.has(ed)) return `d:${ed}`;
+  if (p.email) return `e:${p.email.toLowerCase()}`;
+  return `id:${p.id}`;
+}
+
+// Personalised first touch per partner → ph_outreach status='draft'. Never sends.
+// Opener is personalised; the offer block is fixed and identical; one outreach
+// per organisation (chains deduped); the CTA link is wrapped for click tracking.
 export async function runDraft(limit = 5): Promise<{ drafted: number }> {
   const supa = db();
   const config = await getConfig();
-  const terms = configuredTerms(config);
+  const offer = offerConfig(config);
+  const block = offerBlock(offer);
+  const base = requireEnv("PUBLIC_BASE_URL").replace(/\/$/, "");
 
-  // Top of the scored queue, verified email, no existing outreach.
+  // Org keys already taken by any existing outreach (so chains/repeats are skipped).
+  const { data: outreached } = await supa
+    .from("ph_outreach")
+    .select("ph_partners(id,website,email)");
+  const takenOrgKeys = new Set<string>();
+  type JoinRow = { ph_partners: { id: string; website: string | null; email: string | null } | { id: string; website: string | null; email: string | null }[] | null };
+  for (const row of (outreached ?? []) as unknown as JoinRow[]) {
+    const j = row.ph_partners;
+    const partner = Array.isArray(j) ? j[0] : j;
+    if (partner) takenOrgKeys.add(orgKey(partner));
+  }
+
+  // Candidates: top of the scored queue, verified email, no own outreach.
   const { data: partners, error } = await supa
     .from("ph_partners")
     .select("*, ph_outreach(id)")
     .eq("stage", "queued")
     .eq("email_status", "verified")
     .order("fit_score", { ascending: false })
-    .limit(limit * 3);
+    .limit(limit * 6);
   if (error) throw error;
 
-  const fresh = ((partners ?? []) as (Partner & { ph_outreach: { id: string }[] })[])
-    .filter((p) => p.ph_outreach.length === 0)
-    .slice(0, limit);
+  const seenOrgKeys = new Set<string>(takenOrgKeys);
+  const fresh: Partner[] = [];
+  for (const p of (partners ?? []) as (Partner & { ph_outreach: { id: string }[] })[]) {
+    if (p.ph_outreach.length > 0) continue;
+    const key = orgKey(p);
+    if (seenOrgKeys.has(key)) continue; // one outreach per organisation
+    seenOrgKeys.add(key);
+    fresh.push(p);
+    if (fresh.length >= limit) break;
+  }
 
   const { setProgress } = await import("@/lib/progress");
+  const usedSubjects: string[] = [];
   let drafted = 0;
   let i = 0;
   for (const p of fresh) {
@@ -74,26 +120,38 @@ export async function runDraft(limit = 5): Promise<{ drafted: number }> {
       (p.enrichment?.business_detail as string | undefined) ??
       `${p.business_name} serves pet families in ${p.city ?? "their area"}, ${p.state ?? ""}`;
     try {
-      const d = await structured<{ subject: string; body: string }>({
-        system: howardSystemPrompt(terms),
+      const d = await structured<{ subject: string; opener: string; closer: string }>({
+        system: howardSystemPrompt(usedSubjects),
         user: `Write the first outreach email.
 Business: ${p.business_name}
 Location: ${p.city ?? "?"}, ${p.state ?? "?"}
 Segment: ${p.segment} / ${p.subtype ?? "?"}
 Contact name (use first name in greeting if present, else no name): ${p.contact_name ?? "unknown"}
-Sells memorial products already: ${p.sells_memorial_products ? "yes" : "no/unknown"}
-Chain/network: ${p.is_chain ? "yes — multiple locations" : "no"}
 Specific detail to open with: ${detail}`,
         schema: DRAFT_SCHEMA,
-        maxTokens: 1024,
+        maxTokens: 700,
       });
+
+      // Guarantee subject uniqueness within the batch.
+      let subject = d.subject.trim();
+      if (usedSubjects.some((s) => s.toLowerCase() === subject.toLowerCase())) {
+        subject = `${subject} (${p.city ?? p.state ?? "your area"})`;
+      }
+
+      // Pre-generate the id so we can embed the wrapped CTA in one write.
+      const id = randomUUID();
+      const wrapped = `${base}/c/${clickToken(id)}`;
+      const body = `${d.opener.trim()}\n\n${block}\n\n${d.closer.trim()} ${wrapped}\n\nHoward\nMagic Portraits`;
+
       await supa.from("ph_outreach").insert({
+        id,
         partner_id: p.id,
         touch_number: 1,
-        subject: d.subject,
-        body: d.body,
+        subject,
+        body,
         status: "draft",
       });
+      usedSubjects.push(subject);
       drafted++;
     } catch (e) {
       console.error(`draft: failed for ${p.id}: ${(e as Error).message}`);

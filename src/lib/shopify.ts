@@ -28,34 +28,59 @@ mutation phMintReferralCode($input: DiscountCodeBasicInput!) {
   }
 }`;
 
+export interface DiscountOptions {
+  percentage: number; // e.g. 60
+  productGid?: string; // scope to one product; omit = all products
+  minSubtotal?: number; // minimum order subtotal to redeem
+  combinable?: boolean; // default false = non-stackable
+  usageLimit?: number | null; // null/omit = unlimited redemptions
+}
+
 export async function mintDiscountCode(
   code: string,
   title: string,
-  percentage: number
+  opts: DiscountOptions
 ): Promise<{ gid: string }> {
+  const input: Record<string, unknown> = {
+    title,
+    code,
+    startsAt: new Date().toISOString(),
+    context: { all: "ALL" },
+    customerGets: {
+      value: { percentage: opts.percentage / 100 },
+      items: opts.productGid
+        ? { products: { productsToAdd: [opts.productGid] } }
+        : { all: true },
+    },
+    // Non-stackable by default — can't combine with other promos.
+    combinesWith: {
+      productDiscounts: !!opts.combinable,
+      orderDiscounts: !!opts.combinable,
+      shippingDiscounts: !!opts.combinable,
+    },
+    appliesOncePerCustomer: false,
+  };
+  if (opts.minSubtotal) {
+    input.minimumRequirement = {
+      subtotal: { greaterThanOrEqualToSubtotal: String(opts.minSubtotal) },
+    };
+  }
+  // usageLimit omitted entirely = unlimited redemptions.
+  if (opts.usageLimit != null) input.usageLimit = opts.usageLimit;
+
   const data = await gql<{
     discountCodeBasicCreate: {
       codeDiscountNode: { id: string } | null;
       userErrors: { message: string }[];
     };
-  }>(MINT_MUTATION, {
-    input: {
-      title,
-      code,
-      startsAt: new Date().toISOString(),
-      customerSelection: { all: true },
-      customerGets: {
-        value: { percentage: percentage / 100 },
-        items: { all: true },
-      },
-      appliesOncePerCustomer: false,
-    },
-  });
+  }>(MINT_MUTATION, { input });
   const errs = data.discountCodeBasicCreate.userErrors;
   if (errs.length) throw new Error(`discountCodeBasicCreate: ${errs.map((e) => e.message).join("; ")}`);
   return { gid: data.discountCodeBasicCreate.codeDiscountNode!.id };
 }
 
+// subtotalPriceSet = line-item total after discounts, before tax/shipping —
+// the net basis for the 20% commission (matches the $40-net→$8 example).
 const ORDERS_QUERY = `
 query phOrdersByCode($q: String!, $after: String) {
   orders(first: 50, query: $q, after: $after) {
@@ -63,12 +88,12 @@ query phOrdersByCode($q: String!, $after: String) {
     nodes {
       id
       createdAt
-      currentTotalPriceSet { shopMoney { amount } }
-      discountCodes
+      subtotalPriceSet { shopMoney { amount } }
     }
   }
 }`;
 
+// Returns net (post-discount, pre-tax/shipping) revenue per code.
 export async function ordersByCode(code: string): Promise<{ count: number; revenue: number }> {
   let after: string | null = null;
   let count = 0;
@@ -77,12 +102,12 @@ export async function ordersByCode(code: string): Promise<{ count: number; reven
     const data: {
       orders: {
         pageInfo: { hasNextPage: boolean; endCursor: string | null };
-        nodes: { currentTotalPriceSet: { shopMoney: { amount: string } } }[];
+        nodes: { subtotalPriceSet: { shopMoney: { amount: string } } }[];
       };
     } = await gql(ORDERS_QUERY, { q: `discount_code:${code}`, after });
     for (const o of data.orders.nodes) {
       count += 1;
-      revenue += Number(o.currentTotalPriceSet.shopMoney.amount);
+      revenue += Number(o.subtotalPriceSet.shopMoney.amount);
     }
     after = data.orders.pageInfo.hasNextPage ? data.orders.pageInfo.endCursor : null;
   } while (after);

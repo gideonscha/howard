@@ -1,7 +1,6 @@
 import { structured } from "@/lib/anthropic";
-import { configuredTerms, getConfig } from "@/lib/config";
+import { getConfig, HOWARD_PERSONA, offerBlock, offerConfig } from "@/lib/config";
 import { db } from "@/lib/supabase";
-import { howardSystemPrompt } from "./draft";
 import { Outreach, Partner } from "./types";
 
 interface ReplyTriage {
@@ -57,8 +56,7 @@ export async function handleReply(opts: {
   inboundMessageId: string;
 }): Promise<void> {
   const supa = db();
-  const config = await getConfig();
-  const terms = configuredTerms(config);
+  const offer = offerConfig(await getConfig());
 
   // Pause the cadence: mark this thread replied, drop pending cadence drafts.
   await supa
@@ -83,7 +81,10 @@ export async function handleReply(opts: {
   let triage: ReplyTriage;
   try {
     triage = await structured<ReplyTriage>({
-      system: `${howardSystemPrompt(terms)}
+      system: `${HOWARD_PERSONA}
+
+The offer (use these EXACT terms if you reference them, no paraphrasing):
+${offerBlock(offer)}
 
 You are triaging an inbound reply from a partner prospect. Categorize it. Only write suggested_reply for simple_info_request and sample_request — for everything else set it to null (a human will handle it). Howard never claims to be human; if asked who/what Howard is, that is category who_is_howard and gets escalated ("looping in Gideon"). If they ask to receive the sample set, capture any shipping address present.`,
       user: `Partner: ${opts.partner.business_name} (${opts.partner.city ?? "?"}, ${opts.partner.state ?? "?"})

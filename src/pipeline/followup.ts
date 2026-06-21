@@ -1,8 +1,7 @@
 import { structured } from "@/lib/anthropic";
-import { configuredTerms, getConfig } from "@/lib/config";
+import { getConfig, HOWARD_PERSONA, offerBlock, offerConfig } from "@/lib/config";
 import { followupDelaysDays, sendingEnabled } from "@/lib/env";
 import { db } from "@/lib/supabase";
-import { howardSystemPrompt } from "./draft";
 import { Outreach, Partner } from "./types";
 
 const DRAFT_SCHEMA = {
@@ -23,8 +22,8 @@ export async function runFollowup(): Promise<{ drafted: number; gated: boolean }
 
   const supa = db();
   const delays = followupDelaysDays(); // e.g. [4, 9]
-  const config = await getConfig();
-  const terms = configuredTerms(config);
+  const offer = offerConfig(await getConfig());
+  const followupSystem = `${HOWARD_PERSONA}\n\nYou are writing a brief follow-up to a partner who didn't reply. Return JSON {subject, body}. Keep it short. If you restate the offer, use these EXACT terms, no paraphrasing:\n${offerBlock(offer)}`;
   let drafted = 0;
 
   const { data: contacted, error } = await supa
@@ -53,7 +52,7 @@ export async function runFollowup(): Promise<{ drafted: number; gated: boolean }
 
     try {
       const d = await structured<{ subject: string; body: string }>({
-        system: howardSystemPrompt(terms),
+        system: followupSystem,
         user: `Write follow-up touch #${touchNumber} (no reply to the previous email). Shorter than the first touch (50–80 words), gentle, no guilt. Reference that you wrote before only lightly. Same CTA rules.
 Business: ${p.business_name} (${p.city ?? "?"}, ${p.state ?? "?"})
 Previous subject: ${last.subject}
@@ -92,7 +91,7 @@ Previous body:\n${last.body}`,
     const lastSent = p.ph_outreach.filter((o) => o.status === "sent").sort((a, b) => (b.sent_at ?? "").localeCompare(a.sent_at ?? ""))[0];
     try {
       const d = await structured<{ subject: string; body: string }>({
-        system: howardSystemPrompt(terms),
+        system: followupSystem,
         user: `The Star in Heaven sample set shipped to this partner ~5 days ago. Write a short, warm check-in (40–70 words): did the set arrive, what did they think. No pressure, no new pitch.
 Business: ${p.business_name} (${p.city ?? "?"}, ${p.state ?? "?"})
 Contact: ${p.contact_name ?? "unknown"}`,

@@ -15,6 +15,20 @@ export function unsubscribeToken(email: string): string {
 }
 
 export function verifyUnsubscribeToken(token: string): string | null {
+  return verifyToken(token);
+}
+
+// Click tokens: HMAC(outreachId) so /c/[token] can't be forged or enumerated.
+export function clickToken(outreachId: string): string {
+  const e = Buffer.from(outreachId).toString("base64url");
+  return `${e}.${hmac(e)}`;
+}
+
+export function verifyClickToken(token: string): string | null {
+  return verifyToken(token);
+}
+
+function verifyToken(token: string): string | null {
   const [e, sig] = token.split(".");
   if (!e || !sig) return null;
   const expected = hmac(e);

@@ -1,5 +1,5 @@
 import { mintDiscountCode } from "@/lib/shopify";
-import { optionalEnv } from "@/lib/env";
+import { getConfig, offerConfig } from "@/lib/config";
 import { db } from "@/lib/supabase";
 import { Partner } from "./types";
 
@@ -12,11 +12,10 @@ function codeFor(p: Partner): string {
   return `STAR-${slug}-${rand}`;
 }
 
-// Mint a unique Shopify discount code + tracking URL → ph_referrals, stage='signed'.
-export async function runSign(
-  partnerId: string,
-  percentage = 10
-): Promise<{ code: string; trackingUrl: string }> {
+// Mint the partner's customer-facing discount code (one per partner, unlimited
+// redemptions, non-stackable, scoped to the memorial product, min-order gated)
+// → ph_referrals, stage='signed', and mark the free 2-set gift due to ship.
+export async function runSign(partnerId: string): Promise<{ code: string; trackingUrl: string }> {
   const supa = db();
   const { data: partner, error } = await supa
     .from("ph_partners")
@@ -26,11 +25,18 @@ export async function runSign(
   if (error || !partner) throw new Error(`sign: partner ${partnerId} not found`);
 
   const p = partner as Partner;
+  const offer = offerConfig(await getConfig());
   const code = codeFor(p);
-  const { gid } = await mintDiscountCode(code, `Partner referral — ${p.business_name}`, percentage);
 
-  const storeBase = optionalEnv("PUBLIC_STORE_URL", "https://store.magicportraits.ai").replace(/\/$/, "");
-  const trackingUrl = `${storeBase}/discount/${encodeURIComponent(code)}?utm_source=partner&utm_medium=referral&utm_campaign=${encodeURIComponent(p.id)}`;
+  const { gid } = await mintDiscountCode(code, `Partner — ${p.business_name}`, {
+    percentage: offer.discountPct, // 60
+    productGid: offer.memorialProductGid, // scoped to Star in Heaven
+    minSubtotal: offer.minOrder, // $79 floor
+    combinable: false, // non-stackable
+    usageLimit: null, // unlimited redemptions
+  });
+
+  const trackingUrl = `${offer.familyCtaUrl}?code=${encodeURIComponent(code)}`;
 
   await supa.from("ph_referrals").insert({
     partner_id: p.id,
@@ -38,9 +44,15 @@ export async function runSign(
     shopify_discount_gid: gid,
     tracking_url: trackingUrl,
   });
+
+  // Free 2-set partner gift becomes due — surfaces on the Samples page.
   await supa
     .from("ph_partners")
-    .update({ stage: "signed", updated_at: new Date().toISOString() })
+    .update({
+      stage: "signed",
+      sample_status: "requested",
+      updated_at: new Date().toISOString(),
+    })
     .eq("id", p.id);
 
   return { code, trackingUrl };

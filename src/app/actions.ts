@@ -150,7 +150,6 @@ export async function markSampleDelivered(formData: FormData) {
 
 export async function signPartner(formData: FormData) {
   const partnerId = String(formData.get("partner_id"));
-  const pct = Number(formData.get("percentage") ?? 10);
-  await runSign(partnerId, pct);
+  await runSign(partnerId);
   revalidatePath("/pipeline");
 }
