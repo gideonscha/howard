@@ -70,7 +70,10 @@ export async function runEnrich(limit = 10): Promise<{ processed: number; qualif
 
       const c = await structured<Classification>({
         system:
-          "You qualify US pet-related businesses as referral partners for a premium pet memorial portrait product. The partner must SERVE GRIEVING PET FAMILIES DIRECTLY (crematory, pet cemetery, aftercare provider, vet with aftercare). Mark qualified=false for: out of business, not pet-related, human-only services, outside the US, and — important — suppliers/manufacturers/vendors that sell products or services TO aftercare businesses rather than to families (urn wholesalers, keepsake manufacturers, body-bag suppliers, software, marketing services, association staff). Be factual.",
+          "You qualify US pet-related businesses as referral partners for a premium pet memorial portrait product. The partner must SERVE GRIEVING PET FAMILIES DIRECTLY at the end-of-life moment.\n" +
+          "- MEMORIAL segment qualifies if: pet crematory, pet cemetery, aftercare provider, or in-home euthanasia service.\n" +
+          "- VET segment qualifies ONLY if the clinic offers end-of-life services — euthanasia, pet hospice/palliative care, cremation/aftercare, or memorial services. Set offers_aftercare=true when they handle cremation/aftercare (in-house or coordinated). A GENERAL veterinary practice with NO end-of-life or aftercare emphasis is qualified=false (we don't want every vet, only those at the memorial moment).\n" +
+          "Mark qualified=false for: out of business, not pet-related, human-only services, outside the US, and suppliers/manufacturers/vendors that sell TO aftercare businesses rather than to families (urn wholesalers, keepsake manufacturers, body-bag suppliers, software, marketing services, association staff). Be factual.",
         user: `Business: ${partner.business_name} (${partner.city ?? "?"}, ${partner.state ?? "?"})
 Segment guess: ${partner.segment} / ${partner.subtype ?? "?"}
 Known email: ${partner.email ?? "none"}

@@ -16,21 +16,44 @@ const STATES = [
   "Virginia","Washington","West Virginia","Wisconsin","Wyoming",
 ];
 
-// Broadened query set — different businesses surface under different
-// phrasings. Sweep generation bumped so the cursor re-runs all states;
-// dedupe drops anything the first sweep already caught.
-const QUERIES = [
-  { q: "pet crematory", subtype: "crematory" },
-  { q: "pet cremation service", subtype: "crematory" },
-  { q: "pet cemetery", subtype: "cemetery" },
-  { q: "pet aquamation", subtype: "crematory" },
-  { q: "animal cremation", subtype: "crematory" },
-  { q: "dog cremation", subtype: "crematory" },
-  { q: "pet funeral home", subtype: "crematory" },
-  { q: "pet memorial service", subtype: "memorial" },
-  { q: "in-home pet euthanasia", subtype: "in-home-euthanasia" },
-  { q: "pet aftercare service", subtype: "aftercare" },
-];
+interface PlacesCampaign {
+  cursorKey: string;
+  segment: "memorial" | "vet";
+  queries: { q: string; subtype: string }[];
+}
+
+// Memorial segment — businesses whose whole purpose is the memorial moment.
+const MEMORIAL: PlacesCampaign = {
+  cursorKey: "_places_cursor",
+  segment: "memorial",
+  queries: [
+    { q: "pet crematory", subtype: "crematory" },
+    { q: "pet cremation service", subtype: "crematory" },
+    { q: "pet cemetery", subtype: "cemetery" },
+    { q: "pet aquamation", subtype: "crematory" },
+    { q: "animal cremation", subtype: "crematory" },
+    { q: "dog cremation", subtype: "crematory" },
+    { q: "pet funeral home", subtype: "crematory" },
+    { q: "pet memorial service", subtype: "memorial" },
+    { q: "in-home pet euthanasia", subtype: "in-home-euthanasia" },
+    { q: "pet aftercare service", subtype: "aftercare" },
+  ],
+};
+
+// Vet segment — clinics at the end-of-life moment. Intent-loaded queries so
+// Google's own ranking surfaces aftercare-doing vets, not all 28k practices;
+// enrich then confirms each actually offers euthanasia/hospice/aftercare.
+const VET: PlacesCampaign = {
+  cursorKey: "_places_vet_cursor",
+  segment: "vet",
+  queries: [
+    { q: "pet euthanasia veterinarian", subtype: "euthanasia" },
+    { q: "veterinary hospice care", subtype: "hospice" },
+    { q: "mobile pet euthanasia veterinarian", subtype: "mobile-euthanasia" },
+    { q: "veterinarian pet cremation services", subtype: "vet-aftercare" },
+    { q: "compassionate end of life veterinarian", subtype: "end-of-life" },
+  ],
+};
 
 // (state, query) combos processed per run. 3 combos ≈ one state per run →
 // full US sweep in ~50 autopilot cycles (~2 days), ~$1-2/day in API fees.
@@ -89,12 +112,8 @@ function component(p: Place, type: string): string | undefined {
   return p.addressComponents?.find((c) => c.types?.includes(type))?.shortText ?? undefined;
 }
 
-async function getCursor(): Promise<{ stateIdx: number; queryIdx: number; done: boolean }> {
-  const { data } = await db()
-    .from("ph_config")
-    .select("value")
-    .eq("key", "_places_cursor")
-    .maybeSingle();
+async function getCursor(key: string): Promise<{ stateIdx: number; queryIdx: number; done: boolean }> {
+  const { data } = await db().from("ph_config").select("value").eq("key", key).maybeSingle();
   if (!data?.value) return { stateIdx: 0, queryIdx: 0, done: false };
   try {
     return JSON.parse(data.value);
@@ -103,15 +122,18 @@ async function getCursor(): Promise<{ stateIdx: number; queryIdx: number; done: 
   }
 }
 
-async function setCursor(cursor: { stateIdx: number; queryIdx: number; done: boolean }): Promise<void> {
+async function setCursor(
+  key: string,
+  cursor: { stateIdx: number; queryIdx: number; done: boolean }
+): Promise<void> {
   await db().from("ph_config").upsert({
-    key: "_places_cursor",
+    key,
     value: JSON.stringify(cursor),
     updated_at: new Date().toISOString(),
   });
 }
 
-export async function discoverPlaces(): Promise<SourcedPartner[]> {
+async function sweepPlaces(campaign: PlacesCampaign): Promise<SourcedPartner[]> {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY;
   if (!apiKey) {
     console.warn("places: GOOGLE_PLACES_API_KEY not set — skipping");
@@ -119,20 +141,21 @@ export async function discoverPlaces(): Promise<SourcedPartner[]> {
   }
 
   const { setProgress } = await import("@/lib/progress");
+  const { queries, segment, cursorKey } = campaign;
   const out: SourcedPartner[] = [];
-  let cursor = await getCursor();
+  let cursor = await getCursor(cursorKey);
   if (cursor.done) {
-    console.log("places: full US sweep complete");
+    console.log(`places(${segment}): full US sweep complete`);
     return out;
   }
 
   for (let combo = 0; combo < COMBOS_PER_RUN; combo++) {
     if (cursor.done) break;
     const state = STATES[cursor.stateIdx];
-    const { q, subtype } = QUERIES[cursor.queryIdx];
+    const { q, subtype } = queries[cursor.queryIdx];
     const textQuery = `${q} in ${state}`;
     await setProgress(
-      `discover places: "${textQuery}" (state ${cursor.stateIdx + 1}/${STATES.length}), ${out.length} found so far`
+      `discover places(${segment}): "${textQuery}" (state ${cursor.stateIdx + 1}/${STATES.length}), ${out.length} found so far`
     );
 
     try {
@@ -151,7 +174,7 @@ export async function discoverPlaces(): Promise<SourcedPartner[]> {
             phone: p.nationalPhoneNumber,
             website: p.websiteUri,
             source: `places:${p.id}`,
-            segment: "memorial",
+            segment,
             subtype,
             is_chain: false,
             rating: p.rating,
@@ -162,18 +185,21 @@ export async function discoverPlaces(): Promise<SourcedPartner[]> {
         pages++;
       } while (pageToken && pages < 3);
     } catch (e) {
-      console.error(`places: "${textQuery}" failed: ${(e as Error).message}`);
+      console.error(`places(${segment}): "${textQuery}" failed: ${(e as Error).message}`);
     }
 
     // Advance: queries within a state, then next state.
     cursor =
-      cursor.queryIdx + 1 < QUERIES.length
+      cursor.queryIdx + 1 < queries.length
         ? { ...cursor, queryIdx: cursor.queryIdx + 1 }
         : cursor.stateIdx + 1 < STATES.length
           ? { stateIdx: cursor.stateIdx + 1, queryIdx: 0, done: false }
           : { stateIdx: 0, queryIdx: 0, done: true };
   }
 
-  await setCursor(cursor);
+  await setCursor(cursorKey, cursor);
   return out;
 }
+
+export const discoverPlaces = () => sweepPlaces(MEMORIAL);
+export const discoverPlacesVet = () => sweepPlaces(VET);

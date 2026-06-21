@@ -16,10 +16,10 @@ import { runDraft } from "./draft";
 //   autopilot_enrich_per_tick                        (default 15)
 //   draft_queue_floor        drafts kept pending     (default 10)
 
-// Places is the volume source — it gets most of the rotation. The scrape
-// sources are exhausted (return only dupes), so they get one slot each as a
-// cheap re-check; lapoflove dropped entirely (returned 0 for days).
-const SOURCE_ROTATION = ["places", "places", "iaopcc", "places", "places", "gateway"];
+// Two Places campaigns carry the volume: memorial (broadened re-sweep) and
+// vet (end-of-life clinics). Scrape sources are exhausted — one cheap
+// re-check slot each; lapoflove dropped (returned 0 for days).
+const SOURCE_ROTATION = ["places", "places_vet", "places", "places_vet", "iaopcc", "gateway"];
 
 function num(v: string | undefined, fallback: number): number {
   const n = Number(v);

@@ -290,4 +290,8 @@ export const SOURCES: Record<string, (b: CreditBudget) => Promise<SourcedPartner
     const { discoverPlaces } = await import("./places");
     return discoverPlaces();
   },
+  places_vet: async () => {
+    const { discoverPlacesVet } = await import("./places");
+    return discoverPlacesVet();
+  },
 };

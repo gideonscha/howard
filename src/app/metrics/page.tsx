@@ -242,11 +242,12 @@ export default async function MetricsPage() {
   const ps = partners ?? [];
   const target = Number(targetRow?.value) || 2000;
 
-  const warehouse = ps.filter(
-    (p) =>
-      ["qualified", "queued", "contacted", "replied", "negotiating", "signed", "live"].includes(p.stage) &&
-      (p.email_status === "verified" || (p.fit_score ?? 0) >= 60)
-  ).length;
+  const inWarehouse = (p: { stage: string; email_status: string; fit_score: number | null }) =>
+    ["qualified", "queued", "contacted", "replied", "negotiating", "signed", "live"].includes(p.stage) &&
+    (p.email_status === "verified" || (p.fit_score ?? 0) >= 60);
+  const warehouse = ps.filter(inWarehouse).length;
+  const warehouseMemorial = ps.filter((p) => inWarehouse(p) && p.segment === "memorial").length;
+  const warehouseVet = ps.filter((p) => inWarehouse(p) && p.segment === "vet").length;
 
   const stageCounts = Object.fromEntries(STAGES.map((s) => [s, 0])) as Record<string, number>;
   for (const p of ps) if (p.stage in stageCounts) stageCounts[p.stage]++;
@@ -325,6 +326,9 @@ export default async function MetricsPage() {
             }}
           />
         </div>
+        <p className="small muted" style={{ marginBottom: 0, marginTop: 8 }}>
+          by segment: <strong>{warehouseMemorial}</strong> memorial · <strong>{warehouseVet}</strong> vet
+        </p>
       </div>
 
       <div className="statgrid">
