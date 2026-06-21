@@ -1,4 +1,4 @@
-import { optionalEnv, requireEnv } from "./env";
+import { optionalEnv, publicBaseUrl, requireEnv } from "./env";
 import { unsubscribeToken } from "./tokens";
 
 const BASE = "https://api.agentmail.to/v0";
@@ -25,7 +25,7 @@ export function howardInbox(): string {
 
 // CAN-SPAM footer: physical postal address + working one-click unsubscribe.
 export function canSpamFooter(recipientEmail: string): { text: string; html: string; unsubscribeUrl: string } {
-  const base = requireEnv("PUBLIC_BASE_URL").replace(/\/$/, "");
+  const base = publicBaseUrl();
   const unsubscribeUrl = `${base}/api/u/${unsubscribeToken(recipientEmail)}`;
   const postal = requireEnv("POSTAL_ADDRESS");
   return {

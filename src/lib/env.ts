@@ -8,6 +8,19 @@ export function optionalEnv(name: string, fallback = ""): string {
   return process.env[name] ?? fallback;
 }
 
+// Public base URL for wrapped links (unsubscribe, click redirects). Prefers
+// an explicit PUBLIC_BASE_URL; otherwise uses Vercel's built-in production
+// domain so it works without any extra env config.
+export function publicBaseUrl(): string {
+  const explicit = process.env.PUBLIC_BASE_URL;
+  if (explicit) return explicit.replace(/\/$/, "");
+  const prod = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  if (prod) return `https://${prod}`;
+  const dep = process.env.VERCEL_URL;
+  if (dep) return `https://${dep}`;
+  throw new Error("No PUBLIC_BASE_URL / VERCEL_PROJECT_PRODUCTION_URL available");
+}
+
 export function sendingEnabled(): boolean {
   return process.env.SENDING_ENABLED === "true";
 }

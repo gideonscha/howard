@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { structured } from "@/lib/anthropic";
 import { getConfig, HOWARD_PERSONA, offerBlock, offerConfig } from "@/lib/config";
-import { requireEnv } from "@/lib/env";
+import { publicBaseUrl } from "@/lib/env";
 import { clickToken } from "@/lib/tokens";
 import { db } from "@/lib/supabase";
 import { Partner } from "./types";
@@ -74,7 +74,7 @@ export async function runDraft(limit = 5): Promise<{ drafted: number }> {
   const config = await getConfig();
   const offer = offerConfig(config);
   const block = offerBlock(offer);
-  const base = requireEnv("PUBLIC_BASE_URL").replace(/\/$/, "");
+  const base = publicBaseUrl();
 
   // Org keys already taken by any existing outreach (so chains/repeats are skipped).
   const { data: outreached } = await supa
@@ -110,10 +110,17 @@ export async function runDraft(limit = 5): Promise<{ drafted: number }> {
   }
 
   const { setProgress } = await import("@/lib/progress");
+  // Soft deadline so a large batch can't exceed the function budget — it
+  // drafts what it can, the rest resume next cycle (each partner drafted once).
+  const deadline = Date.now() + 6 * 60_000;
   const usedSubjects: string[] = [];
   let drafted = 0;
   let i = 0;
   for (const p of fresh) {
+    if (Date.now() > deadline) {
+      console.log(`draft: time-boxed at ${i}/${fresh.length}; resuming next cycle`);
+      break;
+    }
     i++;
     await setProgress(`draft: ${i}/${fresh.length} — ${p.business_name}`);
     const detail =

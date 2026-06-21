@@ -11,7 +11,7 @@ const STAGES: { stage: string; label: string; paramHint?: string; defaultParam?:
   { stage: "discover", label: "Discover", paramHint: "source: places | iaopcc | gateway | lapoflove", defaultParam: "places" },
   { stage: "enrich", label: "Enrich", paramHint: "limit", defaultParam: "10" },
   { stage: "score", label: "Score" },
-  { stage: "draft", label: "Draft", paramHint: "limit", defaultParam: "5" },
+  { stage: "draft", label: "Draft", paramHint: "limit", defaultParam: "60" },
   { stage: "send", label: "Send (kill-switch gated)" },
   { stage: "followup", label: "Follow-up (kill-switch gated)" },
   { stage: "attribute", label: "Attribute (Shopify sync)" },

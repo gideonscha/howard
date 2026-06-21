@@ -50,7 +50,7 @@ export async function runAutopilot(): Promise<Record<string, unknown>> {
   const target = num(config.prospect_target, 2000);
   const dailyCredits = num(config.autopilot_daily_credits, 400);
   const enrichPerTick = num(config.autopilot_enrich_per_tick, 15);
-  const draftFloor = num(config.draft_queue_floor, 10);
+  const draftPerCycle = num(config.draft_per_cycle, 60);
 
   const summary: Record<string, unknown> = {};
   const warehouse = await prospectCount();
@@ -94,14 +94,11 @@ export async function runAutopilot(): Promise<Record<string, unknown>> {
     summary.score = { error: (e as Error).message };
   }
 
-  // 4. Keep the approval pile topped up with fresh first-touch drafts.
+  // 4. Draft a batch toward full coverage — every verified queued partner
+  //    gets a first-touch draft (deduped per organisation), worked through in
+  //    time-boxed per-cycle batches until none remain. No buffer floor.
   try {
-    const { count: pendingDrafts } = await supa
-      .from("ph_outreach")
-      .select("id", { count: "exact", head: true })
-      .eq("status", "draft");
-    const gap = draftFloor - (pendingDrafts ?? 0);
-    summary.draft = gap > 0 ? await runDraft(gap) : `skipped — ${pendingDrafts} drafts pending (floor ${draftFloor})`;
+    summary.draft = await runDraft(draftPerCycle);
   } catch (e) {
     summary.draft = { error: (e as Error).message };
   }
