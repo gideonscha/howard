@@ -46,6 +46,49 @@ const TRIAGE_SCHEMA = {
 
 const ESCALATE = new Set(["negotiation_or_terms", "call_request", "complaint", "who_is_howard", "other"]);
 
+// Intent classifier (LLM-judged, not keyword-matched). Shared by the matched
+// reply path (handleReply) and the test-thread path in the inbound webhook.
+export async function classifyReplyIntent(opts: {
+  businessName: string;
+  city?: string | null;
+  state?: string | null;
+  lastSubject: string;
+  replyText: string;
+}): Promise<ReplyTriage> {
+  const offer = offerConfig(await getConfig());
+  try {
+    return await structured<ReplyTriage>({
+      system: `${HOWARD_PERSONA}
+
+You are classifying the INTENT of an inbound reply from a partner prospect — judge meaning, not keywords. Buckets:
+- "interested": ANY sign they want to go ahead or learn more — "yes", "sure", "tell me more", "sounds good", "send them over", "we'd love to". Lean toward this when in doubt between interested and question.
+- "question": they're asking something before deciding (how it works, what's the catch, timing) without a clear yes.
+- "not_interested": a polite or clear no.
+- "unsubscribe": asks to stop being contacted / remove them.
+- "negotiation_or_terms": wants different terms, pricing, a contract.
+- "call_request": wants a phone call or meeting.
+- "complaint": annoyed, reporting spam, upset.
+- "who_is_howard": asks who/what Howard is, if this is a bot, etc.
+- "other": none of the above.
+Write suggested_reply ONLY for "question" (a brief, warm, accurate answer using the offer below) — null for everything else. If a shipping address appears anywhere in the reply, extract it into shipping_address.
+
+The offer (use these EXACT terms if you reference them):
+${offerBlock(offer)}`,
+      user: `Partner: ${opts.businessName} (${opts.city ?? "?"}, ${opts.state ?? "?"})
+Our last email subject: ${opts.lastSubject}
+Their reply:
+---
+${opts.replyText.slice(0, 6000)}
+---`,
+      schema: TRIAGE_SCHEMA,
+      maxTokens: 1024,
+    });
+  } catch (e) {
+    console.error(`inbound triage failed: ${(e as Error).message}`);
+    return { category: "other", shipping_address: null, suggested_reply: null };
+  }
+}
+
 // Handle a reply matched to an outreach thread: classify intent, pause cadence,
 // and route. "interested" → stage='interested', pinned for the manual Onboard
 // step (no auto-draft). Questions get a drafted reply; escalations get flagged.
@@ -58,7 +101,6 @@ export async function handleReply(opts: {
   inboundMessageId: string;
 }): Promise<void> {
   const supa = db();
-  const offer = offerConfig(await getConfig());
 
   // Pause cadence: mark this thread replied, drop pending cadence drafts.
   await supa
@@ -77,38 +119,13 @@ export async function handleReply(opts: {
     .eq("partner_id", opts.partner.id)
     .in("status", ["draft", "approved"]);
 
-  let triage: ReplyTriage;
-  try {
-    triage = await structured<ReplyTriage>({
-      system: `${HOWARD_PERSONA}
-
-You are classifying the INTENT of an inbound reply from a partner prospect — judge meaning, not keywords. Buckets:
-- "interested": ANY sign they want to go ahead or learn more — "yes", "sure", "tell me more", "sounds good", "send them over", "we'd love to". Lean toward this when in doubt between interested and question.
-- "question": they're asking something before deciding (how it works, what's the catch, timing) without a clear yes.
-- "not_interested": a polite or clear no.
-- "unsubscribe": asks to stop being contacted / remove them.
-- "negotiation_or_terms": wants different terms, pricing, a contract.
-- "call_request": wants a phone call or meeting.
-- "complaint": annoyed, reporting spam, upset.
-- "who_is_howard": asks who/what Howard is, if this is a bot, etc.
-- "other": none of the above.
-Write suggested_reply ONLY for "question" (a brief, warm, accurate answer using the offer below) — null for everything else. If a shipping address appears anywhere in the reply, extract it into shipping_address.
-
-The offer (use these EXACT terms if you reference them):
-${offerBlock(offer)}`,
-      user: `Partner: ${opts.partner.business_name} (${opts.partner.city ?? "?"}, ${opts.partner.state ?? "?"})
-Our last email subject: ${opts.outreach.subject}
-Their reply:
----
-${opts.replyText.slice(0, 6000)}
----`,
-      schema: TRIAGE_SCHEMA,
-      maxTokens: 1024,
-    });
-  } catch (e) {
-    console.error(`inbound triage failed: ${(e as Error).message}`);
-    triage = { category: "other", shipping_address: null, suggested_reply: null };
-  }
+  const triage = await classifyReplyIntent({
+    businessName: opts.partner.business_name,
+    city: opts.partner.city,
+    state: opts.partner.state,
+    lastSubject: opts.outreach.subject,
+    replyText: opts.replyText,
+  });
 
   const { logActivity } = await import("@/lib/activity");
   await logActivity(

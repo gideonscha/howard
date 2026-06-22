@@ -94,6 +94,36 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
 
   if (!outreach) {
+    // Test-send path: replies to a test thread (recorded in ph_config by
+    // /api/run/test-send) are triaged + logged to the Activity feed to prove
+    // the inbound round-trip — WITHOUT any partner/outreach writes.
+    const { data: testCfg } = await supa
+      .from("ph_config")
+      .select("value")
+      .eq("key", "_test_thread")
+      .maybeSingle();
+    if (testCfg?.value) {
+      try {
+        const t = JSON.parse(testCfg.value) as { thread_id?: string; to?: string };
+        if (t.thread_id === msg.thread_id || (t.to && t.to.toLowerCase() === fromEmail)) {
+          const { classifyReplyIntent } = await import("@/pipeline/inbound");
+          const triage = await classifyReplyIntent({
+            businessName: "TEST",
+            lastSubject: msg.subject ?? "(test)",
+            replyText: msg.extracted_text ?? msg.text ?? msg.preview ?? "",
+          });
+          const { logActivity } = await import("@/lib/activity");
+          await logActivity(
+            "inbound",
+            `TEST reply from ${fromEmail} — ${triage.category}`,
+            { snippet: (msg.extracted_text ?? msg.preview ?? "").slice(0, 200), test: true }
+          );
+          return NextResponse.json({ ok: true, matched: "test", category: triage.category });
+        }
+      } catch {
+        /* fall through to unmatched */
+      }
+    }
     console.log(`webhook: inbound message on unmatched thread ${msg.thread_id} from ${fromEmail}`);
     return NextResponse.json({ ok: true, matched: false });
   }
