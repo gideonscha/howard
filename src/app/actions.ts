@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/supabase";
-import { runSign } from "@/pipeline/sign";
+import { runOnboard } from "@/pipeline/onboard";
 import { runDiscover } from "@/pipeline/discover";
 import { runEnrich } from "@/pipeline/enrich";
 import { runScore } from "@/pipeline/score";
@@ -148,8 +148,12 @@ export async function markSampleDelivered(formData: FormData) {
   revalidatePath("/samples");
 }
 
-export async function signPartner(formData: FormData) {
+// Manual "Onboard" — drafts the onboarding reply (both codes + link + address
+// ask) into the approval queue. Human reviews and sends; nothing auto-sends.
+export async function onboardPartner(formData: FormData) {
   const partnerId = String(formData.get("partner_id"));
-  await runSign(partnerId);
+  await runOnboard(partnerId);
+  revalidatePath("/queue");
   revalidatePath("/pipeline");
+  revalidatePath(`/pipeline/${partnerId}`);
 }

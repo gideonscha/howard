@@ -38,11 +38,10 @@ detail — EXACTLY ONE sentence:
 - Write ONLY this one observation. Do NOT introduce Magic Portraits, do NOT mention any gift/commission/discount, do NOT add a "here's why I'm writing" hand-off. The system appends the "who we are" line and the offer immediately after.
 - End with a period.
 
-cta — the closing call to action (one or two short sentences):
-- A REPLY-based next step, not a click. The owner replies to engage.
-- Must name BOTH things they get: their two free sample sets AND their families' discount code.
-- Must contain the exact quoted phrase: reply "send me the samples" — keep those words verbatim so it's an unmistakable trigger; vary all the wording around it so two recipients don't see the same sentence.
-- Low-friction and warm. Do NOT include any URL or "click"/"order"/"claim" — the reply IS the action. Example shape (vary it): \`Interested? Just reply "send me the samples" and I'll get your two free sets and your families' discount code on the way.\`
+cta — the closing call to action (ONE short sentence):
+- A warm, natural invitation to REPLY. The reply is the next step — any sign of interest ("yes", "tell me more", "sounds good", "interested") is the right response, and a real person reads it.
+- Do NOT require any specific phrase or keyword. Do NOT name the codes or details (those come later once they reply). Do NOT include any URL or "click"/"order"/"claim".
+- Light and low-friction, e.g. "If that sounds worth a look, just reply and let me know — I'll get you set up." Vary the wording across emails so two recipients don't see the same line.
 
 Tone: warm but never gushing, brief, plain text, sounds like one person wrote it. A busy owner skims — earn the next line. No exclamation points, no "I hope this finds you well". Vary structure across emails; never reuse a sentence skeleton.`;
 }
@@ -163,18 +162,12 @@ ONE researched detail to open with: ${detail}`,
       // Pre-generate the id so we can embed the wrapped CTA in one write.
       const id = randomUUID();
       const wrapped = `${base}/c/${clickToken(id)}`;
-      // Guarantee the reply trigger phrase is present even if the model drifts.
-      let cta = d.cta.trim();
-      if (!/send me the samples/i.test(cta)) {
-        cta = `Interested? Just reply "send me the samples" and I'll get your two free sets and your families' discount code on the way.`;
-      }
-
       const body =
         `${d.greeting.trim()}\n\n` +
         `${d.detail.trim()} ${WHO_WE_ARE}\n\n` +
         `${block}\n\n` +
         `Here's exactly what a family would receive: ${wrapped}\n\n` +
-        `${cta}\n\n` +
+        `${d.cta.trim()}\n\n` +
         `Howard / Magic Portraits`;
 
       const { error: insErr } = await supa.from("ph_outreach").insert({

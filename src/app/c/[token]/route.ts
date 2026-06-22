@@ -10,6 +10,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
   const target = offerConfig(await getConfig()).familyCtaUrl;
   const outreachId = verifyClickToken(token);
 
+  let partnerId: string | null = null;
   if (outreachId) {
     try {
       const supa = db();
@@ -18,8 +19,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
         .select("partner_id")
         .eq("id", outreachId)
         .maybeSingle();
+      partnerId = o?.partner_id ?? null;
       await supa.from("ph_clicks").insert({
-        partner_id: o?.partner_id ?? null,
+        partner_id: partnerId,
         outreach_id: outreachId,
         target_url: target,
       });
@@ -28,5 +30,23 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
     }
   }
 
-  return NextResponse.redirect(target, 302);
+  // Best-effort link→order attribution: tag the destination with UTM params so
+  // the storefront/analytics can carry the partner reference through to checkout.
+  // (Tie-through is only as good as what the store captures — see ATTRIBUTION.md.)
+  let dest = target;
+  if (outreachId) {
+    try {
+      const url = new URL(target);
+      url.searchParams.set("utm_source", "howard");
+      url.searchParams.set("utm_medium", "partner");
+      url.searchParams.set("utm_campaign", "star-in-heaven");
+      if (partnerId) url.searchParams.set("ref", partnerId);
+      url.searchParams.set("howard_oid", outreachId);
+      dest = url.toString();
+    } catch {
+      // malformed familyCtaUrl — fall back to the bare target
+    }
+  }
+
+  return NextResponse.redirect(dest, 302);
 }

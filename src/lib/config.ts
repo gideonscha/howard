@@ -17,6 +17,9 @@ export interface OfferConfig {
   minOrder: number;
   memorialProductGid: string;
   familyCtaUrl: string;
+  giftCode: string; // STAR-M0234 — partner's two free sets ($200 store gift)
+  customerCode: string; // STAR-C6538 — 60% off for the partner's families
+  storeUrl: string;
 }
 
 export function offerConfig(c: Record<string, string>): OfferConfig {
@@ -33,6 +36,9 @@ export function offerConfig(c: Record<string, string>): OfferConfig {
     minOrder: n("customer_min_order_usd", 79),
     memorialProductGid: c.memorial_product_gid || "gid://shopify/Product/8526505902276",
     familyCtaUrl: c.family_cta_url || "https://magicportraits.ai/memorial",
+    giftCode: c.gift_code || "STAR-M0234",
+    customerCode: c.customer_code || "STAR-C6538",
+    storeUrl: c.store_url || "https://magicportraits.ai",
   };
 }
 

@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { db } from "@/lib/supabase";
 import { Outreach, Partner } from "@/pipeline/types";
-import { signPartner } from "@/app/actions";
+import { onboardPartner } from "@/app/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -12,9 +12,8 @@ export default async function PartnerDetail({ params }: { params: Promise<{ id: 
   if (!partner) notFound();
   const p = partner as Partner;
 
-  const [{ data: outreach }, { data: referral }, { data: clicks }] = await Promise.all([
+  const [{ data: outreach }, { data: clicks }] = await Promise.all([
     supa.from("ph_outreach").select("*").eq("partner_id", id).order("created_at", { ascending: true }),
-    supa.from("ph_referrals").select("*").eq("partner_id", id).maybeSingle(),
     supa.from("ph_clicks").select("clicked_at").eq("partner_id", id).order("clicked_at", { ascending: false }),
   ]);
   const clickList = clicks ?? [];
@@ -53,30 +52,19 @@ export default async function PartnerDetail({ params }: { params: Promise<{ id: 
         {p.notes && <p className="small muted">{p.notes}</p>}
       </div>
 
-      {referral ? (
-        <div className="card">
-          <h2 style={{ marginTop: 0 }}>Referral</h2>
-          <p className="small">
-            Code <strong>{referral.discount_code}</strong> · {referral.orders_count} orders · $
-            {Number(referral.revenue).toFixed(2)} revenue
-            <br />
-            <span className="muted">{referral.tracking_url}</span>
+      {["interested", "replied", "negotiating"].includes(p.stage) && (
+        <div className="card warm">
+          <h2 style={{ marginTop: 0 }}>Onboard this partner</h2>
+          <p className="small muted">
+            Drafts the onboarding reply into the approval queue — both fixed codes (STAR-M0234 gift +
+            STAR-C6538 customer), the demo link, and a shipping-address ask. You review and send;
+            nothing auto-sends. Marks the free gift due to ship.
           </p>
+          <form action={onboardPartner} className="row">
+            <input type="hidden" name="partner_id" value={p.id} />
+            <button className="primary">Draft onboarding reply</button>
+          </form>
         </div>
-      ) : (
-        ["replied", "negotiating"].includes(p.stage) && (
-          <div className="card warm">
-            <h2 style={{ marginTop: 0 }}>Sign this partner</h2>
-            <p className="small muted">
-              Mints their 60%-off customer code (scoped to Star in Heaven, min $79, non-stackable,
-              unlimited) and marks the free 2-set gift due to ship.
-            </p>
-            <form action={signPartner} className="row">
-              <input type="hidden" name="partner_id" value={p.id} />
-              <button className="primary">Mint code + sign</button>
-            </form>
-          </div>
-        )
       )}
 
       <h2>Outreach history</h2>

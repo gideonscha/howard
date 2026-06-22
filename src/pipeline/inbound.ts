@@ -4,15 +4,17 @@ import { db } from "@/lib/supabase";
 import { Outreach, Partner } from "./types";
 
 interface ReplyTriage {
+  // Intent buckets (LLM-judged, not keyword-matched).
   category:
-    | "simple_info_request"
-    | "sample_request"
-    | "unsubscribe_request"
+    | "interested" // any sign of yes / tell-me-more → onboard
+    | "question" // a genuine question before deciding
+    | "not_interested"
+    | "unsubscribe"
+    // escalations — flag to Gideon, draft nothing
     | "negotiation_or_terms"
     | "call_request"
     | "complaint"
     | "who_is_howard"
-    | "not_interested"
     | "other";
   shipping_address: string | null;
   suggested_reply: string | null;
@@ -24,14 +26,14 @@ const TRIAGE_SCHEMA = {
     category: {
       type: "string",
       enum: [
-        "simple_info_request",
-        "sample_request",
-        "unsubscribe_request",
+        "interested",
+        "question",
+        "not_interested",
+        "unsubscribe",
         "negotiation_or_terms",
         "call_request",
         "complaint",
         "who_is_howard",
-        "not_interested",
         "other",
       ],
     },
@@ -42,11 +44,11 @@ const TRIAGE_SCHEMA = {
   additionalProperties: false,
 };
 
-// Escalation-only categories: flag prominently, draft nothing.
 const ESCALATE = new Set(["negotiation_or_terms", "call_request", "complaint", "who_is_howard", "other"]);
 
-// Handle a reply matched to an outreach thread: triage, update stages, pause
-// cadence, and either draft a reply (simple cases → approval queue) or escalate.
+// Handle a reply matched to an outreach thread: classify intent, pause cadence,
+// and route. "interested" → stage='interested', pinned for the manual Onboard
+// step (no auto-draft). Questions get a drafted reply; escalations get flagged.
 export async function handleReply(opts: {
   outreach: Outreach;
   partner: Partner;
@@ -58,13 +60,14 @@ export async function handleReply(opts: {
   const supa = db();
   const offer = offerConfig(await getConfig());
 
-  // Pause the cadence: mark this thread replied, drop pending cadence drafts.
+  // Pause cadence: mark this thread replied, drop pending cadence drafts.
   await supa
     .from("ph_outreach")
     .update({
       status: "replied",
       replied_at: new Date().toISOString(),
       reply_snippet: opts.snippet,
+      agentmail_message_id: opts.inboundMessageId, // latest inbound, for threaded replies
       updated_at: new Date().toISOString(),
     })
     .eq("id", opts.outreach.id);
@@ -73,20 +76,26 @@ export async function handleReply(opts: {
     .update({ status: "rejected", attention_reason: "cadence paused — partner replied" })
     .eq("partner_id", opts.partner.id)
     .in("status", ["draft", "approved"]);
-  await supa
-    .from("ph_partners")
-    .update({ stage: "replied", updated_at: new Date().toISOString() })
-    .eq("id", opts.partner.id);
 
   let triage: ReplyTriage;
   try {
     triage = await structured<ReplyTriage>({
       system: `${HOWARD_PERSONA}
 
-The offer (use these EXACT terms if you reference them, no paraphrasing):
-${offerBlock(offer)}
+You are classifying the INTENT of an inbound reply from a partner prospect — judge meaning, not keywords. Buckets:
+- "interested": ANY sign they want to go ahead or learn more — "yes", "sure", "tell me more", "sounds good", "send them over", "we'd love to". Lean toward this when in doubt between interested and question.
+- "question": they're asking something before deciding (how it works, what's the catch, timing) without a clear yes.
+- "not_interested": a polite or clear no.
+- "unsubscribe": asks to stop being contacted / remove them.
+- "negotiation_or_terms": wants different terms, pricing, a contract.
+- "call_request": wants a phone call or meeting.
+- "complaint": annoyed, reporting spam, upset.
+- "who_is_howard": asks who/what Howard is, if this is a bot, etc.
+- "other": none of the above.
+Write suggested_reply ONLY for "question" (a brief, warm, accurate answer using the offer below) — null for everything else. If a shipping address appears anywhere in the reply, extract it into shipping_address.
 
-You are triaging an inbound reply from a partner prospect. Categorize it. Only write suggested_reply for simple_info_request and sample_request — for everything else set it to null (a human will handle it). Howard never claims to be human; if asked who/what Howard is, that is category who_is_howard and gets escalated ("looping in Gideon"). If they ask to receive the sample set, capture any shipping address present.`,
+The offer (use these EXACT terms if you reference them):
+${offerBlock(offer)}`,
       user: `Partner: ${opts.partner.business_name} (${opts.partner.city ?? "?"}, ${opts.partner.state ?? "?"})
 Our last email subject: ${opts.outreach.subject}
 Their reply:
@@ -104,14 +113,18 @@ ${opts.replyText.slice(0, 6000)}
   const { logActivity } = await import("@/lib/activity");
   await logActivity(
     "inbound",
-    `reply from ${opts.partner.business_name} — triaged as ${triage.category}`,
+    `reply from ${opts.partner.business_name} — ${triage.category}`,
     { snippet: opts.snippet.slice(0, 200) }
   );
 
-  if (triage.category === "unsubscribe_request" || triage.category === "not_interested") {
+  // Capture any shipping address regardless of bucket (useful at onboarding).
+  const addressPatch = triage.shipping_address
+    ? { sample_address: triage.shipping_address }
+    : {};
+
+  if (triage.category === "unsubscribe" || triage.category === "not_interested") {
     await supa.from("ph_suppression").insert({
       email: opts.fromEmail.toLowerCase(),
-      domain: null,
       reason: `reply: ${triage.category}`,
     });
     await supa
@@ -121,37 +134,24 @@ ${opts.replyText.slice(0, 6000)}
     return;
   }
 
-  if (triage.category === "sample_request") {
-    // Hottest signal. Capture address, draft confirmation, flag top of queue.
+  if (triage.category === "interested") {
+    // Hottest signal. Pin for the manual Onboard step — no auto-draft.
     await supa
       .from("ph_partners")
       .update({
-        sample_status: "requested",
-        sample_address: triage.shipping_address ?? opts.partner.sample_address,
-        stage: "negotiating",
+        stage: "interested",
+        ...addressPatch,
         updated_at: new Date().toISOString(),
       })
       .eq("id", opts.partner.id);
-    await supa.from("ph_outreach").insert({
-      partner_id: opts.partner.id,
-      touch_number: (opts.outreach.touch_number ?? 1) + 1,
-      subject: `Re: ${opts.outreach.subject}`,
-      body:
-        triage.suggested_reply ??
-        "Wonderful — I'll get a Star in Heaven sample set on its way to you. Could you confirm the best shipping address?",
-      status: "draft",
-      is_reply_draft: true,
-      agentmail_message_id: opts.inboundMessageId,
-      agentmail_thread_id: opts.outreach.agentmail_thread_id,
-      needs_attention: true,
-      attention_reason: triage.shipping_address
-        ? `SAMPLE REQUEST — address captured: ${triage.shipping_address}`
-        : "SAMPLE REQUEST — no address yet, confirmation draft asks for it",
-    });
     return;
   }
 
   if (ESCALATE.has(triage.category)) {
+    await supa
+      .from("ph_partners")
+      .update({ stage: "replied", ...addressPatch, updated_at: new Date().toISOString() })
+      .eq("id", opts.partner.id);
     await supa.from("ph_outreach").insert({
       partner_id: opts.partner.id,
       touch_number: (opts.outreach.touch_number ?? 1) + 1,
@@ -167,7 +167,11 @@ ${opts.replyText.slice(0, 6000)}
     return;
   }
 
-  // simple_info_request → drafted reply into the approval queue
+  // question → drafted reply into the approval queue
+  await supa
+    .from("ph_partners")
+    .update({ stage: "replied", ...addressPatch, updated_at: new Date().toISOString() })
+    .eq("id", opts.partner.id);
   await supa.from("ph_outreach").insert({
     partner_id: opts.partner.id,
     touch_number: (opts.outreach.touch_number ?? 1) + 1,
@@ -177,7 +181,7 @@ ${opts.replyText.slice(0, 6000)}
     is_reply_draft: true,
     agentmail_message_id: opts.inboundMessageId,
     agentmail_thread_id: opts.outreach.agentmail_thread_id,
-    needs_attention: false,
-    attention_reason: "reply draft — info request",
+    needs_attention: true,
+    attention_reason: "question — reply drafted for review",
   });
 }
