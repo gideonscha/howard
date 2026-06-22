@@ -7,7 +7,7 @@ export interface Partner {
   state: string | null;
   website: string | null;
   email: string | null;
-  email_status: "verified" | "risky" | "invalid" | "unverified";
+  email_status: "verified" | "catch_all" | "risky" | "invalid" | "unverified";
   phone: string | null;
   contact_name: string | null;
   source: string;

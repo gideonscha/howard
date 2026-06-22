@@ -171,7 +171,7 @@ export async function runDraft(
     .from("ph_partners")
     .select("*")
     .eq("stage", "queued")
-    .eq("email_status", "verified")
+    .in("email_status", ["verified", "catch_all"])
     .order("fit_score", { ascending: false, nullsFirst: false })
     .limit(limit * 6);
   if (error) throw error;

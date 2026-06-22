@@ -45,7 +45,13 @@ const CLASSIFY_SCHEMA = {
 // Fetch the partner's site, classify fit, verify the email. → stage='qualified'
 export async function runEnrich(
   limit = 10
-): Promise<{ processed: number; qualified: number; healAttempted: number; healed: number }> {
+): Promise<{
+  processed: number;
+  qualified: number;
+  healAttempted: number;
+  healed: number;
+  recheckedSendable: number;
+}> {
   const supa = db();
   const { data: partners, error } = await supa
     .from("ph_partners")
@@ -227,27 +233,36 @@ Classify this business.`,
     }
   }
 
-  // Re-verify pass: partners that got through classification while email
-  // verification was unavailable (e.g. missing API key) stay 'unverified';
-  // pick them up here so a later run can heal them.
+  // Re-verify pass: pick up emails that aren't sendable yet — 'unverified'
+  // (verification was unavailable when first enriched) AND 'risky' (re-graded
+  // once under the catch-all/role-aware mapping, so catch-all + role inboxes
+  // become sendable). A one-time `reverified` marker stops risky rows being
+  // re-checked every tick.
+  let recheckedSendable = 0;
   const { data: unverified } = await supa
     .from("ph_partners")
-    .select("id,email")
+    .select("id,email,email_status,enrichment")
     .in("stage", ["qualified", "queued"])
-    .eq("email_status", "unverified")
+    .in("email_status", ["unverified", "risky"])
     .not("email", "is", null)
+    .or("enrichment->>reverified.is.null,enrichment->>reverified.neq.done")
     .limit(limit);
   for (const row of unverified ?? []) {
     try {
       const status = await verifyEmail(row.email as string);
+      if (status === "verified" || status === "catch_all") recheckedSendable++;
       await supa
         .from("ph_partners")
-        .update({ email_status: status, updated_at: new Date().toISOString() })
+        .update({
+          email_status: status,
+          enrichment: { ...((row.enrichment as Record<string, unknown>) ?? {}), reverified: "done" },
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", row.id);
     } catch (e) {
       console.warn(`enrich(reverify): failed for ${row.email}: ${(e as Error).message}`);
     }
   }
 
-  return { processed: partners?.length ?? 0, qualified, healAttempted, healed };
+  return { processed: partners?.length ?? 0, qualified, healAttempted, healed, recheckedSendable };
 }

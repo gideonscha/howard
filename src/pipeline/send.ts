@@ -1,4 +1,5 @@
 import { replyToMessage, sendEmail } from "@/lib/agentmail";
+import { isSendableStatus } from "@/lib/verify-email";
 import { dailySendCap } from "@/lib/env";
 import { gateSend } from "@/lib/killswitch";
 import { db } from "@/lib/supabase";
@@ -49,8 +50,8 @@ export async function runSend(): Promise<{ sent: number; dryRun: number; skipped
       skipped.push(`${row.id}: no email`);
       continue;
     }
-    if (partner.email_status !== "verified") {
-      skipped.push(`${row.id}: email not verified (${partner.email_status})`);
+    if (!isSendableStatus(partner.email_status)) {
+      skipped.push(`${row.id}: email not sendable (${partner.email_status})`);
       continue;
     }
     const domain = email.split("@")[1];
