@@ -43,7 +43,9 @@ const CLASSIFY_SCHEMA = {
 };
 
 // Fetch the partner's site, classify fit, verify the email. → stage='qualified'
-export async function runEnrich(limit = 10): Promise<{ processed: number; qualified: number }> {
+export async function runEnrich(
+  limit = 10
+): Promise<{ processed: number; qualified: number; healAttempted: number; healed: number }> {
   const supa = db();
   const { data: partners, error } = await supa
     .from("ph_partners")
@@ -166,9 +168,14 @@ Classify this business.`,
       console.error(`enrich: failed for ${partner.id}: ${(e as Error).message}`);
     }
   }
-  // Email-hunt healing pass: qualified partners with no email get the
-  // contact-page hunt retried (covers rows enriched before the hunter
-  // existed). Found addresses go straight to verification.
+  // Email-hunt healing pass: email-less qualified/queued partners get the
+  // (now domain-guarded) contact hunt retried. Freshly-quarantined rows — ones
+  // that just had a misaligned contact stripped — are ordered to the FRONT so
+  // recovery targets them first, and we work a large batch under a soft
+  // deadline so the backlog clears in a cycle or two rather than trickling.
+  let healAttempted = 0;
+  let healed = 0;
+  const healDeadline = Date.now() + 4 * 60_000;
   const { data: emailless } = await supa
     .from("ph_partners")
     .select("id,website,business_name,enrichment")
@@ -176,8 +183,14 @@ Classify this business.`,
     .is("email", null)
     .not("website", "is", null)
     .or("enrichment->>email_hunted.is.null,enrichment->>email_hunted.neq.true")
-    .limit(limit);
+    .order("enrichment->>quarantined_at", { ascending: false, nullsFirst: false })
+    .limit(Math.max(limit, 150));
   for (const row of emailless ?? []) {
+    if (Date.now() > healDeadline) {
+      console.log(`enrich(heal): time-boxed at ${healAttempted}; resuming next tick`);
+      break;
+    }
+    healAttempted++;
     try {
       const { findEmailOnSite } = await import("@/lib/email-hunt");
       let found = await findEmailOnSite(row.website as string);
@@ -193,6 +206,7 @@ Classify this business.`,
         }
       }
       const status = found ? await verifyEmail(found).catch(() => "unverified" as const) : "unverified";
+      if (found && status === "verified") healed++;
       await supa
         .from("ph_partners")
         .update({
@@ -201,6 +215,8 @@ Classify this business.`,
           enrichment: {
             ...((row.enrichment as Record<string, unknown>) ?? {}),
             email_hunted: true,
+            // clear the manual flag only once a real, verified contact is found
+            ...(found && status === "verified" ? { needs_manual_contact: false } : {}),
             ...(foundSource ? { email_source: foundSource } : {}),
           },
           updated_at: new Date().toISOString(),
@@ -233,5 +249,5 @@ Classify this business.`,
     }
   }
 
-  return { processed: partners?.length ?? 0, qualified };
+  return { processed: partners?.length ?? 0, qualified, healAttempted, healed };
 }
