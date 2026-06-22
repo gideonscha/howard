@@ -51,7 +51,7 @@ export const HOWARD_PERSONA = `You are Howard, partner outreach for Magic Portra
 // exactly: {specific detail} + this line — with no room for a formulaic
 // "here's why I'm writing" connective sentence to creep back in.
 export const WHO_WE_ARE =
-  "I'm with Magic Portraits — we make hand-finished portraits of pets who've passed, printed on premium tiles.";
+  "I'm with Magic Portraits — we create custom AI portraits of pets who've passed, printed on premium tiles.";
 
 const WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
 const word = (n: number) => (n >= 0 && n <= 10 ? WORDS[n] : String(n));
