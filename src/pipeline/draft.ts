@@ -97,7 +97,7 @@ export function howardSystemPrompt(usedSubjects: string[]): string {
 You are writing the personal parts of a SHORT outreach email — the kind a real person dashes off, not a marketing template. Return JSON with exactly three fields — subject, detail, cta — and nothing else. The system assembles the email: a greeting it writes itself, then your detail sentence followed by a FIXED "who we are" line (you do NOT write that), then a FIXED offer block, then a demo link, then your cta, then the signature. Do NOT write a greeting — the system adds it.
 
 subject:
-- Clear over clever. Say what it is. Good pattern: "A free memorial gift for {business}'s families" (adapt naturally to the business).
+- Clear over clever. Say what it is. Good pattern: "Free Star in Heaven portrait samples for {business}" (adapt naturally to the business). The genuinely-free thing is the PARTNER's own sample sets — never imply the families get something free (they get a discount, not a gift), and never call it a "free gift for families".
 - Must be distinct. Do NOT reuse any of these already-used subjects: ${usedSubjects.length ? usedSubjects.map((s) => `"${s}"`).join(", ") : "(none yet)"}.
 
 detail — EXACTLY ONE sentence:
