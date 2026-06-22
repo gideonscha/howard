@@ -89,11 +89,24 @@ export async function POST(req: NextRequest) {
       }
       emails = [...new Set(emails.map((e) => e.toLowerCase()))];
 
+      // Only PERMANENT (hard) bounces and complaints suppress. Transient/soft
+      // bounces (greylisting, rate-limiting, temporary failures — common when a
+      // cold domain first hits Gmail) are NOT a bad address and must not kill a
+      // good prospect; we log them for visibility but leave the partner intact.
+      const isComplaint = event.event_type === "message.complained";
+      const bounceType = String(info.type ?? info.bounceType ?? "");
+      const permanent = isComplaint || /permanent/i.test(bounceType);
+
       await logActivity(
         "suppression",
-        `${event.event_type} — ${emails.join(", ") || "unparsed recipient"}`,
-        { raw: JSON.stringify(event).slice(0, 600) }
+        `${event.event_type}${bounceType ? ` (${bounceType})` : ""} — ${emails.join(", ") || "unparsed recipient"}${permanent ? "" : " · soft, not suppressed"}`,
+        { raw: JSON.stringify(event).slice(0, 600), permanent }
       );
+
+      if (!permanent) {
+        // Soft bounce — leave the address/partner/outreach untouched.
+        return NextResponse.json({ ok: true, soft: true });
+      }
 
       for (const email of emails) {
         const { error } = await supa.from("ph_suppression").insert({ email, reason: event.event_type });
