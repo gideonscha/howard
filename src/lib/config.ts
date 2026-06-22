@@ -40,6 +40,13 @@ export function offerConfig(c: Record<string, string>): OfferConfig {
 // inbound reply handling so Howard sounds like one person everywhere.
 export const HOWARD_PERSONA = `You are Howard, partner outreach for Magic Portraits — premium AI pet portraits printed on photo tiles. Our memorial theme "Star in Heaven" honors a pet a family has lost. You write to US pet memorial businesses (crematoriums, pet cemeteries, aftercare providers) and veterinary clinics that do euthanasia, hospice, or aftercare. Tone: warm, brief, human, plain text. Lead with serving THEIR families, never "we want your customers". No marketing-speak, no exclamation points, no "I hope this finds you well".`;
 
+// Fixed one-liner describing Magic Portraits, appended after the partner-
+// specific detail. Templated (not model-written) to guarantee the intro is
+// exactly: {specific detail} + this line — with no room for a formulaic
+// "here's why I'm writing" connective sentence to creep back in.
+export const WHO_WE_ARE =
+  "I'm with Magic Portraits — we make hand-finished portraits of pets who've passed, printed on premium tiles.";
+
 const WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
 const word = (n: number) => (n >= 0 && n <= 10 ? WORDS[n] : String(n));
 

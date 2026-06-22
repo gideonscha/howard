@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { structured } from "@/lib/anthropic";
-import { getConfig, HOWARD_PERSONA, offerBlock, offerConfig } from "@/lib/config";
+import { getConfig, HOWARD_PERSONA, offerBlock, offerConfig, WHO_WE_ARE } from "@/lib/config";
 import { publicBaseUrl } from "@/lib/env";
 import { clickToken } from "@/lib/tokens";
 import { db } from "@/lib/supabase";
@@ -11,16 +11,16 @@ const DRAFT_SCHEMA = {
   properties: {
     subject: { type: "string" },
     greeting: { type: "string" },
-    intro: { type: "string" },
+    detail: { type: "string" },
   },
-  required: ["subject", "greeting", "intro"],
+  required: ["subject", "greeting", "detail"],
   additionalProperties: false,
 };
 
 export function howardSystemPrompt(usedSubjects: string[]): string {
   return `${HOWARD_PERSONA}
 
-You are writing the top of a SHORT outreach email — the kind a real person dashes off, not a marketing template. Return JSON with exactly three fields — subject, greeting, intro — and nothing else. The system then appends a FIXED offer block (three bullets you do NOT write), the demo link, a sign-off line, and the signature. So the recipient reads: your greeting, your intro (ending in a colon), the three offer bullets, the link, the close, the signature.
+You are writing the top of a SHORT outreach email — the kind a real person dashes off, not a marketing template. Return JSON with exactly three fields — subject, greeting, detail — and nothing else. The system assembles the email: your greeting, then your one detail sentence followed by a FIXED "who we are" line (you do NOT write that), then a FIXED offer block, the demo link, the close, and the signature.
 
 subject:
 - Clear over clever. Say what it is. Good pattern: "A free memorial gift for {business}'s families" (adapt naturally to the business).
@@ -32,11 +32,10 @@ greeting (one line, ends with a comma):
 - Otherwise (generic/role inbox like info@ or allcounty@, or no name at all) use a warm "Hello,".
 - ALWAYS output a greeting.
 
-intro — EXACTLY TWO sentences, no more:
-- Sentence 1: ONE specific, researched detail about THIS business to show it isn't mass mail (the viewing room, "since 1996", their Texas locations). ONE detail — not a paragraph of praise. Specificity, not flattery.
-- Sentence 2: who we are, in one plain line: "I'm with Magic Portraits — we make hand-finished portraits of pets who've passed, printed on premium tiles".
-- STOP THERE. Do NOT add a third hand-off sentence. In particular NEVER write "Here's why I'm reaching out", "Here's why I'm writing", "There's something here…", or any generic transition — the offer block that follows opens with its own lead-in ("Here's the idea, and it costs you nothing:"), so a connective sentence is redundant and reads as a template across emails.
-- Do NOT state any numbers, gift contents, commission, or discount — the system inserts the exact offer right after.
+detail — EXACTLY ONE sentence:
+- ONE specific, researched detail about THIS business that shows it isn't mass mail (the viewing room, "since 1996", their Texas locations, a grief-support program). Specificity, not flattery — not a paragraph of praise.
+- Write ONLY this one observation. Do NOT introduce Magic Portraits, do NOT mention any gift/commission/discount, do NOT add a "here's why I'm writing" hand-off. The system appends the "who we are" line and the offer immediately after your sentence, so anything beyond the one detail will read as a duplicated template across emails.
+- End with a period.
 
 Tone: warm but never gushing, brief, plain text, sounds like one person wrote it. A busy owner skims — earn the next line. No exclamation points, no "I hope this finds you well". Vary structure across emails; never reuse a sentence skeleton.`;
 }
@@ -135,7 +134,7 @@ export async function runDraft(
       (p.enrichment?.business_detail as string | undefined) ??
       `${p.business_name} serves pet families in ${p.city ?? "their area"}, ${p.state ?? ""}`;
     try {
-      const d = await structured<{ subject: string; greeting: string; intro: string }>({
+      const d = await structured<{ subject: string; greeting: string; detail: string }>({
         system: howardSystemPrompt(usedSubjects),
         user: `Write the top of the outreach email.
 Business: ${p.business_name}
@@ -159,7 +158,7 @@ ONE researched detail to open with: ${detail}`,
       const wrapped = `${base}/c/${clickToken(id)}`;
       const body =
         `${d.greeting.trim()}\n\n` +
-        `${d.intro.trim()}\n\n` +
+        `${d.detail.trim()} ${WHO_WE_ARE}\n\n` +
         `${block}\n\n` +
         `Here's exactly what a family would receive: ${wrapped}\n\n` +
         `If it's a fit, I'll get your two sets shipped out.\n\n` +
