@@ -35,6 +35,24 @@ export function canSpamFooter(recipientEmail: string): { text: string; html: str
   };
 }
 
+// Render `[label](url)` links: plain-text shows "label: url" (clients can't
+// hyperlink), HTML shows a tidy <a>label</a> so long tracking URLs don't appear
+// as a wall of characters in the inbox.
+const MD_LINK = /\[([^\]]+)\]\(([^)]+)\)/g;
+
+function linkifyText(s: string): string {
+  return s.replace(MD_LINK, (_m, label, url) => `${label}: ${url}`);
+}
+
+function linkifyHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(MD_LINK, (_m, label, url) => `<a href="${url}">${label}</a>`)
+    .replace(/\n/g, "<br>");
+}
+
 export async function sendEmail(opts: {
   to: string;
   subject: string;
@@ -47,8 +65,8 @@ export async function sendEmail(opts: {
     body: JSON.stringify({
       to: opts.to,
       subject: opts.subject,
-      text: opts.text + footer.text,
-      html: (opts.html ?? opts.text.replace(/\n/g, "<br>")) + footer.html,
+      text: linkifyText(opts.text) + footer.text,
+      html: (opts.html ?? linkifyHtml(opts.text)) + footer.html,
       labels: ["outreach"],
       headers: {
         "List-Unsubscribe": `<${footer.unsubscribeUrl}>`,
@@ -69,7 +87,8 @@ export async function replyToMessage(opts: {
     {
       method: "POST",
       body: JSON.stringify({
-        text: opts.text + footer.text,
+        text: linkifyText(opts.text) + footer.text,
+        html: linkifyHtml(opts.text) + footer.html,
         headers: {
           "List-Unsubscribe": `<${footer.unsubscribeUrl}>`,
           "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",

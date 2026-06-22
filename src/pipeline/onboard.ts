@@ -51,7 +51,7 @@ export async function runOnboard(partnerId: string): Promise<{ drafted: boolean 
     `Wonderful — I'm so glad Star in Heaven feels right for ${p.business_name}'s families. Here's everything to get you started.`,
     `Your two free sample sets (a $${offer.giftValue} value, on us): head to ${offer.storeUrl}, upload a favourite photo of a pet, and create the portraits just as a family would — then enter code ${offer.giftCode} at checkout and it covers both sets in full. Going through it yourself is the best way to see exactly what your families will experience.`,
     `For your families: share code ${offer.customerCode} — it gives them ${offer.discountPct}% off any memorial order over $${offer.minOrder}, well beyond anything available online. Most partners add it to the keepsake paperwork they already send home, or mention it when a family asks about a memorial.`,
-    `Here's exactly what your families would receive: ${wrapped}`,
+    `Here's exactly what your families would receive — take a look [here](${wrapped}).`,
     `Reply any time with questions — I'm glad to help you get set up.`,
     `Howard / Magic Portraits`,
   ].join("\n\n");

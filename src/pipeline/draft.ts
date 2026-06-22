@@ -166,7 +166,7 @@ ONE researched detail to open with: ${detail}`,
         `${d.greeting.trim()}\n\n` +
         `${d.detail.trim()} ${WHO_WE_ARE}\n\n` +
         `${block}\n\n` +
-        `Here's exactly what a family would receive: ${wrapped}\n\n` +
+        `Here's exactly what a family would receive — take a look [here](${wrapped}).\n\n` +
         `${d.cta.trim()}\n\n` +
         `Howard / Magic Portraits`;
 
