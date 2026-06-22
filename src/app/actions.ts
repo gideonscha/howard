@@ -157,3 +157,89 @@ export async function onboardPartner(formData: FormData) {
   revalidatePath("/pipeline");
   revalidatePath(`/pipeline/${partnerId}`);
 }
+
+async function recordRunResult(stage: string, result: unknown) {
+  await db()
+    .from("ph_config")
+    .upsert({
+      key: "_last_run_result",
+      value: JSON.stringify({ stage, at: new Date().toISOString(), result }, null, 2),
+      updated_at: new Date().toISOString(),
+    });
+  revalidatePath("/run");
+}
+
+// One-time AgentMail provisioning, run from the dashboard (Basic-auth gated) so
+// it executes server-side where AGENTMAIL_API_KEY + outbound live. The returned
+// AGENTMAIL_WEBHOOK_SECRET surfaces in "Last run result" — paste it into Vercel.
+export async function setupAgentmailAction() {
+  const { createInbox, createWebhook, howardInbox } = await import("@/lib/agentmail");
+  const { publicBaseUrl } = await import("@/lib/env");
+  let result: Record<string, unknown>;
+  try {
+    let inboxResult: unknown;
+    try {
+      inboxResult = await createInbox();
+    } catch (e) {
+      inboxResult = `inbox create skipped: ${(e as Error).message} (already exists is fine)`;
+    }
+    const hookUrl = `${publicBaseUrl().replace(/\/$/, "")}/api/webhooks/agentmail`;
+    const webhook = await createWebhook(hookUrl);
+    result = {
+      inbox: howardInbox(),
+      inboxResult,
+      webhook_id: webhook.webhook_id,
+      hookUrl,
+      AGENTMAIL_WEBHOOK_SECRET: webhook.secret,
+      note: "Paste AGENTMAIL_WEBHOOK_SECRET into Vercel env (Production), then redeploy.",
+    };
+  } catch (e) {
+    result = { error: (e as Error).message };
+  }
+  await recordRunResult("setup-agentmail", result);
+}
+
+// Safe test send from the dashboard: sends a real first-touch draft's body to a
+// supplied address from howard@. Does NOT read SENDING_ENABLED, does NOT touch
+// the partner queue, marks NO ph_outreach row as sent. Records the thread in
+// ph_config so a reply round-trips through the webhook for triage.
+export async function testSendAction(formData: FormData) {
+  const to = String(formData.get("to") ?? "").trim();
+  let result: Record<string, unknown>;
+  if (!to) {
+    result = { error: "enter a recipient email" };
+  } else {
+    try {
+      const supa = db();
+      const { data: draft } = await supa
+        .from("ph_outreach")
+        .select("subject,body")
+        .eq("status", "draft")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!draft) {
+        result = { error: "no draft available to use as the test body" };
+      } else {
+        const { sendEmail } = await import("@/lib/agentmail");
+        const sent = await sendEmail({ to, subject: draft.subject, text: draft.body });
+        await supa.from("ph_config").upsert({
+          key: "_test_thread",
+          value: JSON.stringify({
+            thread_id: sent.thread_id,
+            message_id: sent.message_id,
+            to,
+            at: new Date().toISOString(),
+          }),
+          updated_at: new Date().toISOString(),
+        });
+        const { logActivity } = await import("@/lib/activity");
+        await logActivity("send", `TEST send to ${to} (subject: ${draft.subject})`, { test: true });
+        result = { test: true, to, subject: draft.subject, ...sent };
+      }
+    } catch (e) {
+      result = { error: (e as Error).message };
+    }
+  }
+  await recordRunResult("test-send", result);
+}

@@ -1,6 +1,6 @@
 import { db } from "@/lib/supabase";
 import { getProgress } from "@/lib/progress";
-import { runStageAction } from "@/app/actions";
+import { runStageAction, setupAgentmailAction, testSendAction } from "@/app/actions";
 import { AutoRefresh } from "./refresh";
 
 export const dynamic = "force-dynamic";
@@ -78,6 +78,33 @@ export default async function RunPage() {
           {s.paramHint && <span className="small muted">{s.paramHint}</span>}
         </form>
       ))}
+
+      <h2>AgentMail (test path — never touches the partner queue)</h2>
+      <div className="card">
+        <p className="muted small" style={{ marginTop: 0 }}>
+          One-time provisioning, then a safe test send. Test-send ignores the kill-switch,
+          touches no partner record, and marks nothing as sent — it emails a real draft&apos;s body
+          to the address you type, and records the thread so your reply round-trips through the
+          webhook. Results (including the webhook secret) appear under &quot;Last run result&quot; below.
+        </p>
+        <form action={setupAgentmailAction} className="row" style={{ marginBottom: 12 }}>
+          <button className="primary">1 · Set up inbox + webhook</button>
+          <span className="small muted">
+            creates howard@ + webhook, returns AGENTMAIL_WEBHOOK_SECRET to paste into Vercel
+          </span>
+        </form>
+        <form action={testSendAction} className="row">
+          <button className="primary">2 · Send test email</button>
+          <input
+            type="email"
+            name="to"
+            placeholder="your@email.com"
+            required
+            style={{ maxWidth: 260 }}
+          />
+          <span className="small muted">sends a real first-touch draft to this address</span>
+        </form>
+      </div>
 
       <h2>Autopilot</h2>
       <div className="card">
