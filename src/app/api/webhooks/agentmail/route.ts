@@ -28,6 +28,14 @@ function parseAddress(from: string): string {
   return (m ? m[1] : from).trim().toLowerCase();
 }
 
+// Heuristic out-of-office / auto-reply detection from subject + body.
+function isAutoReply(subject?: string, text?: string): boolean {
+  const s = `${subject ?? ""} ${(text ?? "").slice(0, 500)}`.toLowerCase();
+  return /out of office|out-of-office|automatic reply|auto-?reply|away from (the|my) (office|desk)|on vacation|on holiday|on leave|currently (away|out of)|i am out|i'm out|will be out of|return to the office|back in the office|thank you for your (email|message)[,.]? i('| a)m (currently|away|out)/.test(
+    s
+  );
+}
+
 export async function POST(req: NextRequest) {
   const secret = process.env.AGENTMAIL_WEBHOOK_SECRET;
   if (!secret) return new NextResponse("Webhook secret not configured", { status: 503 });
@@ -120,7 +128,7 @@ export async function POST(req: NextRequest) {
   const fromEmail = parseAddress(msg.from);
 
   // Match the thread to our outreach.
-  const { data: outreach } = await supa
+  let { data: outreach } = await supa
     .from("ph_outreach")
     .select("*, ph_partners(*)")
     .eq("agentmail_thread_id", msg.thread_id)
@@ -128,6 +136,29 @@ export async function POST(req: NextRequest) {
     .order("sent_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  // Fallback: match by SENDER to a partner we've actually emailed. Auto-replies
+  // (out-of-office) and forwards often don't preserve the thread id, so a strict
+  // thread match drops them.
+  if (!outreach && fromEmail) {
+    const { data: partnerMatch } = await supa
+      .from("ph_partners")
+      .select("id")
+      .ilike("email", fromEmail)
+      .limit(1)
+      .maybeSingle();
+    if (partnerMatch) {
+      const { data: bySender } = await supa
+        .from("ph_outreach")
+        .select("*, ph_partners(*)")
+        .eq("partner_id", partnerMatch.id)
+        .eq("status", "sent")
+        .order("sent_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (bySender) outreach = bySender;
+    }
+  }
 
   if (!outreach) {
     // Test-send path: replies to a test thread (recorded in ph_config by
@@ -165,11 +196,26 @@ export async function POST(req: NextRequest) {
   }
 
   const { ph_partners: partner, ...outreachRow } = outreach as Outreach & { ph_partners: Partner };
+  const replyText = msg.extracted_text ?? msg.text ?? msg.preview ?? "";
+
+  // Out-of-office / auto-reply: surface it for visibility but do NOT treat it as
+  // a real reply — no cadence pause, no stage change, no drafted response.
+  // Otherwise an away message would silently stop our follow-ups.
+  if (isAutoReply(msg.subject, replyText)) {
+    const { logActivity } = await import("@/lib/activity");
+    await logActivity(
+      "inbound",
+      `auto-reply (out-of-office) from ${partner.business_name} — cadence unaffected`,
+      { snippet: (msg.extracted_text ?? msg.preview ?? "").slice(0, 200), auto_reply: true }
+    );
+    return NextResponse.json({ ok: true, matched: true, autoReply: true });
+  }
+
   await handleReply({
     outreach: outreachRow as Outreach,
     partner,
     fromEmail,
-    replyText: msg.extracted_text ?? msg.text ?? msg.preview ?? "",
+    replyText,
     snippet: (msg.extracted_text ?? msg.preview ?? "").slice(0, 500),
     inboundMessageId: msg.message_id,
   });
