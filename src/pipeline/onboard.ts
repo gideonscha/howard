@@ -49,7 +49,7 @@ export async function runOnboard(partnerId: string): Promise<{ drafted: boolean 
   const body = [
     greeting,
     `Wonderful — I'm so glad Star in Heaven feels right for ${p.business_name}'s families. Here's everything to get you started.`,
-    `Your two free sample sets (a $${offer.giftValue} value, on us): redeem them at ${offer.storeUrl} with code ${offer.giftCode} — it covers both sets in full. If it's easier, just reply with your shipping address and I'll send them out to you directly.`,
+    `Your two free sample sets (a $${offer.giftValue} value, on us): head to ${offer.storeUrl}, upload a favourite photo of a pet, and create the portraits just as a family would — then enter code ${offer.giftCode} at checkout and it covers both sets in full. Going through it yourself is the best way to see exactly what your families will experience.`,
     `For your families: share code ${offer.customerCode} — it gives them ${offer.discountPct}% off any memorial order over $${offer.minOrder}, well beyond anything available online. Most partners add it to the keepsake paperwork they already send home, or mention it when a family asks about a memorial.`,
     `Here's exactly what your families would receive: ${wrapped}`,
     `Reply any time with questions — I'm glad to help you get set up.`,
@@ -67,15 +67,16 @@ export async function runOnboard(partnerId: string): Promise<{ drafted: boolean 
     agentmail_message_id: last?.agentmail_message_id ?? null,
     agentmail_thread_id: last?.agentmail_thread_id ?? null,
     needs_attention: true,
-    attention_reason: "ONBOARDING — review & send (both codes + address ask)",
+    attention_reason: "ONBOARDING — review & send (both codes + demo link)",
   });
 
-  // Active onboarding + gift due to ship (shows on the Samples to-do rail).
+  // Active onboarding. The free sets are self-redeemed at the store with the
+  // gift code (the partner uploads a pet and creates the portraits), so the
+  // order — and shipping — flows through Shopify; no manual sample-ship rail.
   await supa
     .from("ph_partners")
     .update({
       stage: "negotiating",
-      sample_status: "requested",
       updated_at: new Date().toISOString(),
     })
     .eq("id", p.id);

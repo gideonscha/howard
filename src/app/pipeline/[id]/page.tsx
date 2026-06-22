@@ -57,8 +57,9 @@ export default async function PartnerDetail({ params }: { params: Promise<{ id: 
           <h2 style={{ marginTop: 0 }}>Onboard this partner</h2>
           <p className="small muted">
             Drafts the onboarding reply into the approval queue — both fixed codes (STAR-M0234 gift +
-            STAR-C6538 customer), the demo link, and a shipping-address ask. You review and send;
-            nothing auto-sends. Marks the free gift due to ship.
+            STAR-C6538 customer) and the demo link, explaining how to redeem the two free sets at the
+            store (upload a pet, create the portraits, apply the code). You review and send; nothing
+            auto-sends.
           </p>
           <form action={onboardPartner} className="row">
             <input type="hidden" name="partner_id" value={p.id} />

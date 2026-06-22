@@ -71,8 +71,8 @@ export default async function ActionQueue() {
           <ReplyContext partnerId={p.id} />
           <p className="small muted">
             Onboard drafts the reply into the queue — both codes ({"STAR-M0234"} gift +{" "}
-            {"STAR-C6538"} customer), the demo link, and a shipping-address ask. You review and send;
-            nothing auto-sends.
+            {"STAR-C6538"} customer) and the demo link, with how to redeem the free sets at the
+            store. You review and send; nothing auto-sends.
           </p>
           <form action={onboardPartner}>
             <input type="hidden" name="partner_id" value={p.id} />
