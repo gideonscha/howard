@@ -10,33 +10,34 @@ const DRAFT_SCHEMA = {
   type: "object",
   properties: {
     subject: { type: "string" },
-    opener: { type: "string" },
-    closer: { type: "string" },
+    greeting: { type: "string" },
+    intro: { type: "string" },
   },
-  required: ["subject", "opener", "closer"],
+  required: ["subject", "greeting", "intro"],
   additionalProperties: false,
 };
 
 export function howardSystemPrompt(usedSubjects: string[]): string {
   return `${HOWARD_PERSONA}
 
-Return JSON with exactly three fields — subject, opener, closer — and nothing else. The system assembles the full email as: your opener, then a FIXED offer block (which you do NOT write), then your closer followed by a link, then the signature.
+You are writing the top of a SHORT outreach email — the kind a real person dashes off, not a marketing template. Return JSON with exactly three fields — subject, greeting, intro — and nothing else. The system then appends a FIXED offer block (three bullets you do NOT write), the demo link, a sign-off line, and the signature. So the recipient reads: your greeting, your intro (ending in a colon), the three offer bullets, the link, the close, the signature.
 
 subject:
-- Short, specific to THIS business — reference their name or the detail you were given.
+- Clear over clever. Say what it is. Good pattern: "A free memorial gift for {business}'s families" (adapt naturally to the business).
 - Must be distinct. Do NOT reuse any of these already-used subjects: ${usedSubjects.length ? usedSubjects.map((s) => `"${s}"`).join(", ") : "(none yet)"}.
 
-opener (2–4 sentences):
-- Open with the ONE specific detail about their business — show you actually looked.
-- For vet clinics, lead with the families they comfort when it's time to say goodbye; for memorial businesses, the families they already serve.
-- Then transition warmly to: you'd like to offer something for those families.
-- CRITICAL: do NOT state any numbers, gift, commission, discount, or terms — the system inserts the exact offer immediately after your opener. If you mention terms you will contradict the real offer.
+greeting (one line, ends with a comma):
+- If a real person's name is known, greet by first name — "Hi Nan,". Two owners → "Hi Rick and Shea,".
+- If the only contact is a generic/role inbox (info@, allcounty@…) or no person is known, use "Hi there,".
+- ALWAYS output a greeting.
 
-closer (1 short sentence):
-- Invite them to see what their families would receive, leading directly into a link.
-- Do NOT write any URL — the system appends the link after your sentence.
+intro (2–3 short sentences, MUST end with a colon):
+- Start with ONE specific, researched detail about THIS business to show it isn't mass mail (the viewing room, "since 1996", their Texas locations). ONE detail — not a paragraph of praise. Specificity, not flattery.
+- Say who we are in one plain line: "I'm with Magic Portraits — we make hand-finished portraits of pets who've passed, printed on premium tiles".
+- End with a lead-in to the offer that ends in a colon, e.g. "…and I'd like to set {business} up with a memorial gift for your families, at no cost to you:".
+- Do NOT state any numbers, gift contents, commission, or discount — the system inserts the exact offer right after. The offer must stand on its own; don't make it depend on the link.
 
-Tone: warm, brief, human, plain text. No marketing-speak, no exclamation points, no "I hope this finds you well". Vary sentence structure between emails — do not reuse a template skeleton.`;
+Tone: warm but never gushing, brief, plain text, sounds like one person wrote it. A busy owner skims — earn the next line. No exclamation points, no "I hope this finds you well". Vary structure across emails; never reuse a sentence skeleton.`;
 }
 
 // Organisation key: collapse multi-location chains to one outreach. Same
@@ -133,16 +134,16 @@ export async function runDraft(
       (p.enrichment?.business_detail as string | undefined) ??
       `${p.business_name} serves pet families in ${p.city ?? "their area"}, ${p.state ?? ""}`;
     try {
-      const d = await structured<{ subject: string; opener: string; closer: string }>({
+      const d = await structured<{ subject: string; greeting: string; intro: string }>({
         system: howardSystemPrompt(usedSubjects),
-        user: `Write the first outreach email.
+        user: `Write the top of the outreach email.
 Business: ${p.business_name}
 Location: ${p.city ?? "?"}, ${p.state ?? "?"}
 Segment: ${p.segment} / ${p.subtype ?? "?"}
-Contact name (use first name in greeting if present, else no name): ${p.contact_name ?? "unknown"}
-Specific detail to open with: ${detail}`,
+Contact person (for the greeting — a real name, or "none"): ${p.contact_name ?? "none"}
+ONE researched detail to open with: ${detail}`,
         schema: DRAFT_SCHEMA,
-        maxTokens: 700,
+        maxTokens: 600,
       });
 
       // Guarantee subject uniqueness within the batch.
@@ -154,7 +155,13 @@ Specific detail to open with: ${detail}`,
       // Pre-generate the id so we can embed the wrapped CTA in one write.
       const id = randomUUID();
       const wrapped = `${base}/c/${clickToken(id)}`;
-      const body = `${d.opener.trim()}\n\n${block}\n\n${d.closer.trim()} ${wrapped}\n\nHoward\nMagic Portraits`;
+      const body =
+        `${d.greeting.trim()}\n\n` +
+        `${d.intro.trim()}\n\n` +
+        `${block}\n\n` +
+        `Here's exactly what a family would receive: ${wrapped}\n\n` +
+        `If it's a fit, I'll get your two sets in the post.\n\n` +
+        `Howard / Magic Portraits`;
 
       const { error: insErr } = await supa.from("ph_outreach").insert({
         id,

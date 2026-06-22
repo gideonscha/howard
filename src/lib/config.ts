@@ -43,15 +43,14 @@ export const HOWARD_PERSONA = `You are Howard, partner outreach for Magic Portra
 const WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
 const word = (n: number) => (n >= 0 && n <= 10 ? WORDS[n] : String(n));
 
-// The fixed, verbatim offer block — identical in every draft, numbers from
-// config. Order: partner gift → commission → family discount.
+// The fixed, verbatim offer bullets — identical in every draft, numbers from
+// config. Order: partner gift → commission → family discount. The draft's
+// intro supplies the "...at no cost to you:" lead-in, so no header line here.
 export function offerBlock(o: OfferConfig): string {
   return [
-    `Here's the idea, and it costs you nothing:`,
-    ``,
-    `— ${cap(word(o.giftSets))} free sets of ${word(o.tilesPerSet)} Star in Heaven portraits (around $${o.giftValue}) to keep and display, so you can judge the quality for yourself.`,
-    `— A ${o.commissionPct}% commission to you on every order your families place, paid on the amount they pay after their discount.`,
-    `— An exclusive ${o.discountPct}% discount for the families you serve — well beyond anything available online — on any order over $${o.minOrder}.`,
+    `— ${cap(word(o.giftSets))} free sets of ${word(o.tilesPerSet)} Star in Heaven portraits (~$${o.giftValue}) to keep and display.`,
+    `— A ${o.commissionPct}% commission on every order your families place, on the after-discount amount.`,
+    `— An exclusive ${o.discountPct}% discount for your families — well beyond anything online — on orders over $${o.minOrder}.`,
   ].join("\n");
 }
 
