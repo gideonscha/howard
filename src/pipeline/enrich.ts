@@ -2,6 +2,7 @@ import { scrapeMarkdown } from "@/lib/firecrawl";
 import { structured } from "@/lib/anthropic";
 import { verifyEmail } from "@/lib/verify-email";
 import { db } from "@/lib/supabase";
+import { domainOf, emailDomainAligned } from "@/lib/contact-guard";
 import { Partner } from "./types";
 
 interface Classification {
@@ -85,7 +86,15 @@ Classify this business.`,
         schema: CLASSIFY_SCHEMA,
       });
 
+      // Domain-alignment guard: a scraped/LLM-extracted address is only trusted
+      // if it matches the business's own domain (or is a public mailbox). A
+      // foreign corporate domain (another business's inbox on this page) is
+      // dropped so the ladder below can hunt for the right one.
       let email = (c.contact_email ?? partner.email)?.trim().toLowerCase() || null;
+      if (email && !emailDomainAligned(email, partner.website)) {
+        console.log(`enrich: dropped misaligned email ${email} for ${partner.business_name} (site ${partner.website ?? "none"})`);
+        email = null;
+      }
       let huntedName: string | null = null;
       let emailSource: string | null = email ? "site" : null;
       // Email ladder: site-claimed → contact-page hunt (free) → Hunter (1 credit).
@@ -97,7 +106,7 @@ Classify this business.`,
           try {
             const { hunterDomainSearch } = await import("@/lib/hunter");
             const hit = await hunterDomainSearch(partner.website);
-            if (hit) {
+            if (hit && emailDomainAligned(hit.email, partner.website)) {
               email = hit.email;
               huntedName = hit.contactName;
               emailSource = "hunter";
@@ -116,6 +125,20 @@ Classify this business.`,
         }
       }
 
+      // Cross-record uniqueness: if this email already sits on a DIFFERENT
+      // business (different website domain), it's a shared/parent inbox being
+      // stamped onto unrelated records — flag for manual review, don't trust it.
+      let sharedConflict = false;
+      if (email) {
+        const { data: dupes } = await supa
+          .from("ph_partners")
+          .select("id,website")
+          .eq("email", email)
+          .neq("id", partner.id);
+        const mine = domainOf(partner.website);
+        sharedConflict = (dupes ?? []).some((d) => domainOf(d.website) !== mine);
+      }
+
       await supa
         .from("ph_partners")
         .update({
@@ -128,8 +151,10 @@ Classify this business.`,
             business_detail: c.business_detail,
             disqualify_reason: c.disqualify_reason,
             email_source: emailSource,
-            // invalid email → manual touch via contact form / phone, not deletion
-            needs_manual_contact: !email || emailStatus === "invalid",
+            // invalid/missing email or a shared cross-business inbox → manual
+            // touch via contact form / phone, not an automated send.
+            needs_manual_contact: !email || emailStatus === "invalid" || sharedConflict,
+            ...(sharedConflict ? { shared_email_conflict: true } : {}),
           },
           stage: c.qualified ? "qualified" : "declined",
           notes: c.qualified ? partner.notes : c.disqualify_reason,
@@ -161,7 +186,7 @@ Classify this business.`,
       if (!found) {
         const { hunterDomainSearch } = await import("@/lib/hunter");
         const hit = await hunterDomainSearch(row.website as string).catch(() => null);
-        if (hit) {
+        if (hit && emailDomainAligned(hit.email, row.website as string)) {
           found = hit.email;
           foundName = hit.contactName;
           foundSource = "hunter";
