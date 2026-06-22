@@ -12,15 +12,16 @@ const DRAFT_SCHEMA = {
     subject: { type: "string" },
     greeting: { type: "string" },
     detail: { type: "string" },
+    cta: { type: "string" },
   },
-  required: ["subject", "greeting", "detail"],
+  required: ["subject", "greeting", "detail", "cta"],
   additionalProperties: false,
 };
 
 export function howardSystemPrompt(usedSubjects: string[]): string {
   return `${HOWARD_PERSONA}
 
-You are writing the top of a SHORT outreach email — the kind a real person dashes off, not a marketing template. Return JSON with exactly three fields — subject, greeting, detail — and nothing else. The system assembles the email: your greeting, then your one detail sentence followed by a FIXED "who we are" line (you do NOT write that), then a FIXED offer block, the demo link, the close, and the signature.
+You are writing the personal parts of a SHORT outreach email — the kind a real person dashes off, not a marketing template. Return JSON with exactly four fields — subject, greeting, detail, cta — and nothing else. The system assembles the email: your greeting, then your detail sentence followed by a FIXED "who we are" line (you do NOT write that), then a FIXED offer block, then a demo link on its own line, then your cta, then the signature.
 
 subject:
 - Clear over clever. Say what it is. Good pattern: "A free memorial gift for {business}'s families" (adapt naturally to the business).
@@ -33,9 +34,15 @@ greeting (one line, ends with a comma):
 - ALWAYS output a greeting.
 
 detail — EXACTLY ONE sentence:
-- ONE specific, researched detail about THIS business that shows it isn't mass mail (the viewing room, "since 1996", their Texas locations, a grief-support program). Specificity, not flattery — not a paragraph of praise.
-- Write ONLY this one observation. Do NOT introduce Magic Portraits, do NOT mention any gift/commission/discount, do NOT add a "here's why I'm writing" hand-off. The system appends the "who we are" line and the offer immediately after your sentence, so anything beyond the one detail will read as a duplicated template across emails.
+- The ONE or TWO most distinctive details about THIS business — not an inventory. If they offer five things, pick the single most telling one (the on-site cremation, the 365-day grief program, "since 1983"). Short and specific beats comprehensive; never list more than two things.
+- Write ONLY this one observation. Do NOT introduce Magic Portraits, do NOT mention any gift/commission/discount, do NOT add a "here's why I'm writing" hand-off. The system appends the "who we are" line and the offer immediately after.
 - End with a period.
+
+cta — the closing call to action (one or two short sentences):
+- A REPLY-based next step, not a click. The owner replies to engage.
+- Must name BOTH things they get: their two free sample sets AND their families' discount code.
+- Must contain the exact quoted phrase: reply "send me the samples" — keep those words verbatim so it's an unmistakable trigger; vary all the wording around it so two recipients don't see the same sentence.
+- Low-friction and warm. Do NOT include any URL or "click"/"order"/"claim" — the reply IS the action. Example shape (vary it): \`Interested? Just reply "send me the samples" and I'll get your two free sets and your families' discount code on the way.\`
 
 Tone: warm but never gushing, brief, plain text, sounds like one person wrote it. A busy owner skims — earn the next line. No exclamation points, no "I hope this finds you well". Vary structure across emails; never reuse a sentence skeleton.`;
 }
@@ -134,7 +141,7 @@ export async function runDraft(
       (p.enrichment?.business_detail as string | undefined) ??
       `${p.business_name} serves pet families in ${p.city ?? "their area"}, ${p.state ?? ""}`;
     try {
-      const d = await structured<{ subject: string; greeting: string; detail: string }>({
+      const d = await structured<{ subject: string; greeting: string; detail: string; cta: string }>({
         system: howardSystemPrompt(usedSubjects),
         user: `Write the top of the outreach email.
 Business: ${p.business_name}
@@ -156,12 +163,18 @@ ONE researched detail to open with: ${detail}`,
       // Pre-generate the id so we can embed the wrapped CTA in one write.
       const id = randomUUID();
       const wrapped = `${base}/c/${clickToken(id)}`;
+      // Guarantee the reply trigger phrase is present even if the model drifts.
+      let cta = d.cta.trim();
+      if (!/send me the samples/i.test(cta)) {
+        cta = `Interested? Just reply "send me the samples" and I'll get your two free sets and your families' discount code on the way.`;
+      }
+
       const body =
         `${d.greeting.trim()}\n\n` +
         `${d.detail.trim()} ${WHO_WE_ARE}\n\n` +
         `${block}\n\n` +
         `Here's exactly what a family would receive: ${wrapped}\n\n` +
-        `If it's a fit, I'll get your two sets shipped out.\n\n` +
+        `${cta}\n\n` +
         `Howard / Magic Portraits`;
 
       const { error: insErr } = await supa.from("ph_outreach").insert({
