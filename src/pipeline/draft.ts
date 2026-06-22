@@ -32,11 +32,11 @@ greeting (one line, ends with a comma):
 - Otherwise (generic/role inbox like info@ or allcounty@, or no name at all) use a warm "Hello,".
 - ALWAYS output a greeting.
 
-intro (2–3 short sentences, ends with a period — NOT a colon):
-- Start with ONE specific, researched detail about THIS business to show it isn't mass mail (the viewing room, "since 1996", their Texas locations). ONE detail — not a paragraph of praise. Specificity, not flattery.
-- Say who we are in one plain line: "I'm with Magic Portraits — we make hand-finished portraits of pets who've passed, printed on premium tiles".
-- End with a short sentence handing off to the offer. VARY THIS SENTENCE every time — it must not become a template. Do NOT reuse "I'd like to set your families up with a memorial gift, at no cost to you". Mix it up naturally: "There's something here I think your families would value." / "I'd like to put a gift in your hands for them." / "Here's why I'm writing." etc. End with a period; the offer block that follows has its own lead-in.
-- Do NOT state any numbers, gift contents, commission, or discount — the system inserts the exact offer right after. The offer must stand on its own; don't make it depend on the link.
+intro — EXACTLY TWO sentences, no more:
+- Sentence 1: ONE specific, researched detail about THIS business to show it isn't mass mail (the viewing room, "since 1996", their Texas locations). ONE detail — not a paragraph of praise. Specificity, not flattery.
+- Sentence 2: who we are, in one plain line: "I'm with Magic Portraits — we make hand-finished portraits of pets who've passed, printed on premium tiles".
+- STOP THERE. Do NOT add a third hand-off sentence. In particular NEVER write "Here's why I'm reaching out", "Here's why I'm writing", "There's something here…", or any generic transition — the offer block that follows opens with its own lead-in ("Here's the idea, and it costs you nothing:"), so a connective sentence is redundant and reads as a template across emails.
+- Do NOT state any numbers, gift contents, commission, or discount — the system inserts the exact offer right after.
 
 Tone: warm but never gushing, brief, plain text, sounds like one person wrote it. A busy owner skims — earn the next line. No exclamation points, no "I hope this finds you well". Vary structure across emails; never reuse a sentence skeleton.`;
 }
