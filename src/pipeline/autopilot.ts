@@ -16,10 +16,11 @@ import { runDraft } from "./draft";
 //   autopilot_enrich_per_tick                        (default 15)
 //   draft_queue_floor        drafts kept pending     (default 10)
 
-// Two Places campaigns carry the volume: memorial (broadened re-sweep) and
-// vet (end-of-life clinics). Scrape sources are exhausted — one cheap
-// re-check slot each; lapoflove dropped (returned 0 for days).
-const SOURCE_ROTATION = ["places", "places_vet", "places", "places_vet", "iaopcc", "gateway"];
+// Two Places campaigns carry the volume now, swept at city/metro granularity:
+// memorial and vet. The directory scrape sources (iaopcc/gateway) are
+// exhausted — they returned only dupes while burning Firecrawl credits — so
+// every cycle now runs a city-level Places slice (alternating memorial/vet).
+const SOURCE_ROTATION = ["places", "places_vet", "places", "places_vet", "places", "places_vet"];
 
 function num(v: string | undefined, fallback: number): number {
   const n = Number(v);
