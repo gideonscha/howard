@@ -10,28 +10,95 @@ const DRAFT_SCHEMA = {
   type: "object",
   properties: {
     subject: { type: "string" },
-    greeting: { type: "string" },
     detail: { type: "string" },
     cta: { type: "string" },
   },
-  required: ["subject", "greeting", "detail", "cta"],
+  required: ["subject", "detail", "cta"],
   additionalProperties: false,
 };
+
+// Role/generic local-parts that are NOT a person's name.
+const ROLE_LOCALPARTS = new Set([
+  "info", "contact", "contactus", "office", "hello", "admin", "sales", "team",
+  "support", "care", "mail", "help", "service", "services", "general", "inquiries",
+  "enquiries", "booking", "bookings", "accounts", "billing", "reception", "frontdesk",
+  "pets", "memorials", "aftercare", "noreply", "no-reply", "email", "mailbox",
+  "owner", "staff", "hi", "petcremation", "cremation",
+]);
+const NAME_TITLES = new Set(["dr", "dr.", "mr", "mr.", "mrs", "mrs.", "ms", "ms."]);
+
+// Common given names — used to tell a real personal email (tiffany@) apart from
+// an initial+surname or business inbox (jbullock@, heckartfh@, apetcremation@).
+// A name is only trusted from an email when its first token is in this set, so
+// we never mistake a business string for a person.
+const COMMON_FIRST_NAMES = new Set([
+  "aaron","adam","adrian","alan","albert","alex","alexa","alexis","alice","alicia","allen","amanda","amber","amy","andrea","andrew","andy","angela","ann","anna","anne","anthony","april","arthur","ashley","austin",
+  "barbara","becky","ben","benjamin","beth","betty","beverly","bill","billy","bob","bobby","bonnie","brad","bradley","brandon","brenda","brian","brittany","bruce","bryan",
+  "carl","carla","carlos","carol","carolyn","carrie","catherine","cathy","chad","charles","charlie","cheryl","chris","christian","christina","christine","christopher","cindy","claire","clara","cody","colette","colleen","connie","craig","crystal","curtis","cy","cynthia",
+  "dale","dan","dana","daniel","danielle","danny","darlene","darren","dave","david","dawn","dean","debbie","deborah","debra","denice","denise","dennis","derek","diana","diane","don","donald","donna","doris","dorothy","doug","douglas","duane","dustin",
+  "earl","ed","eddie","edward","edwin","eileen","elaine","eleanor","elizabeth","ellen","emily","emma","eric","erica","erik","erin","ernest","ethan","eugene","evan","evelyn",
+  "frances","francis","frank","fred","gabriel","gail","gary","gene","george","gerald","gina","glenn","gloria","gordon","grace","greg","gregory",
+  "hannah","harold","harry","heather","helen","henry","herbert","holly","howard","hugh",
+  "ian","irene","isaac","jack","jackie","jacob","jake","james","jamie","jan","jane","janet","janice","jared","jason","jay","jean","jeff","jeffrey","jenna","jennifer","jenny","jeremy","jerry","jesse","jessica","jill","jim","jimmy","joan","joann","joanne","jodi","joe","joel","john","johnny","jon","jonathan","jordan","joseph","josh","joshua","joyce","juan","judith","judy","julia","julie","justin",
+  "karen","karl","kate","katherine","kathleen","kathryn","kathy","katie","kayla","kaylee","keith","kelly","ken","kenneth","kevin","kim","kimberly","kris","kristen","kristin","kristina","kyle",
+  "larry","laura","lauren","laurie","lawrence","lee","leon","leonard","leslie","linda","lindsay","lisa","lloyd","logan","lois","loretta","lori","louis","louise","lucas","lucy","luke","lydia","lynn",
+  "marc","marcia","margaret","maria","marie","marilyn","mark","marsha","martha","martin","marvin","mary","mason","matt","matthew","maureen","megan","melanie","melissa","melvin","michael","michelle","mike","mildred","molly","monica","morgan",
+  "nancy","naomi","natalie","nathan","neil","nicholas","nick","nicole","noah","nora","norman",
+  "olivia","oscar","owen","pam","pamela","pat","patricia","patrick","patty","paul","paula","peggy","peter","philip","phillip","phyllis",
+  "rachel","ralph","randy","ray","raymond","rebecca","regina","renee","rhonda","richard","rick","rita","rob","robert","roberta","robin","rodney","roger","ron","ronald","rose","roy","russell","ruth","ryan",
+  "sally","sam","samantha","samuel","sandra","sandy","sara","sarah","scott","sean","seth","shane","shannon","sharon","shawn","sheila","shelly","sherry","shirley","stacey","stacy","stan","stanley","stephanie","stephen","steve","steven","sue","susan","suzanne",
+  "tami","tammy","tanya","tara","ted","teresa","terri","terry","theresa","thomas","tiffany","tim","timothy","tina","todd","tom","tony","tracy","travis","trevor","troy",
+  "valerie","vanessa","vera","vernon","veronica","vicki","vickie","victor","victoria","vincent","virginia","wade","walter","wanda","warren","wayne","wendy","wesley","william","willie","yolanda","zachary",
+]);
+
+function firstNameOf(name: string | null): string | null {
+  if (!name) return null;
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  let i = 0;
+  while (i < parts.length && NAME_TITLES.has(parts[i].toLowerCase())) i++;
+  const tok = parts[i];
+  if (!tok || !/^[A-Za-z][A-Za-z'-]+$/.test(tok)) return null;
+  return tok[0].toUpperCase() + tok.slice(1).toLowerCase();
+}
+
+// A name from the email's local-part — only when the first token is a known
+// given name (so jbullock@/heckartfh@/apetcremation@ are NOT treated as people).
+function nameFromEmail(email: string | null): string | null {
+  if (!email) return null;
+  const local = email.split("@")[0]?.toLowerCase() ?? "";
+  if (!local || ROLE_LOCALPARTS.has(local)) return null;
+  const tok = local.split(/[._+-]/)[0];
+  if (!tok || !COMMON_FIRST_NAMES.has(tok)) return null;
+  return tok[0].toUpperCase() + tok.slice(1);
+}
+
+// Greeting is resolved in CODE (not model-written) so a name can never
+// contradict the actual inbox. The email's owner is who actually reads it, so
+// when a known personal email name differs from the researched contact name
+// (e.g. contact "Aaron" but the address is tiffany@…), greet the inbox owner.
+// Nickname/prefix overlaps (dan@ for "Daniel") are treated as the same person.
+export function resolveGreeting(contactName: string | null, email: string | null): string {
+  const cFirst = firstNameOf(contactName);
+  const eFirst = nameFromEmail(email);
+  if (cFirst && eFirst) {
+    const a = cFirst.toLowerCase();
+    const b = eFirst.toLowerCase();
+    const related = a === b || a.startsWith(b) || b.startsWith(a);
+    return related ? `Hi ${cFirst},` : `Hi ${eFirst},`;
+  }
+  if (cFirst) return `Hi ${cFirst},`;
+  if (eFirst) return `Hi ${eFirst},`;
+  return "Hello,";
+}
 
 export function howardSystemPrompt(usedSubjects: string[]): string {
   return `${HOWARD_PERSONA}
 
-You are writing the personal parts of a SHORT outreach email — the kind a real person dashes off, not a marketing template. Return JSON with exactly four fields — subject, greeting, detail, cta — and nothing else. The system assembles the email: your greeting, then your detail sentence followed by a FIXED "who we are" line (you do NOT write that), then a FIXED offer block, then a demo link on its own line, then your cta, then the signature.
+You are writing the personal parts of a SHORT outreach email — the kind a real person dashes off, not a marketing template. Return JSON with exactly three fields — subject, detail, cta — and nothing else. The system assembles the email: a greeting it writes itself, then your detail sentence followed by a FIXED "who we are" line (you do NOT write that), then a FIXED offer block, then a demo link, then your cta, then the signature. Do NOT write a greeting — the system adds it.
 
 subject:
 - Clear over clever. Say what it is. Good pattern: "A free memorial gift for {business}'s families" (adapt naturally to the business).
 - Must be distinct. Do NOT reuse any of these already-used subjects: ${usedSubjects.length ? usedSubjects.map((s) => `"${s}"`).join(", ") : "(none yet)"}.
-
-greeting (one line, ends with a comma):
-- If a real person's name is known, greet by first name — "Hi Nan,". Two owners → "Hi Rick and Shea,".
-- If no contact name is given but the email address clearly embeds a person's name (e.g. "rick@…" → "Hi Rick,", "j.smith@…" → "Hi J,"/"Hi John," only if unambiguous), use it.
-- Otherwise (generic/role inbox like info@ or allcounty@, or no name at all) use a warm "Hello,".
-- ALWAYS output a greeting.
 
 detail — EXACTLY ONE sentence:
 - The ONE or TWO most distinctive details about THIS business — not an inventory. If they offer five things, pick the single most telling one (the on-site cremation, the 365-day grief program, "since 1983"). Short and specific beats comprehensive; never list more than two things.
@@ -140,14 +207,12 @@ export async function runDraft(
       (p.enrichment?.business_detail as string | undefined) ??
       `${p.business_name} serves pet families in ${p.city ?? "their area"}, ${p.state ?? ""}`;
     try {
-      const d = await structured<{ subject: string; greeting: string; detail: string; cta: string }>({
+      const d = await structured<{ subject: string; detail: string; cta: string }>({
         system: howardSystemPrompt(usedSubjects),
-        user: `Write the top of the outreach email.
+        user: `Write the top of the outreach email (no greeting — the system adds it).
 Business: ${p.business_name}
 Location: ${p.city ?? "?"}, ${p.state ?? "?"}
 Segment: ${p.segment} / ${p.subtype ?? "?"}
-Contact person (for the greeting — a real name, or "none"): ${p.contact_name ?? "none"}
-Email address (you MAY extract a first name from this for the greeting if no contact person): ${p.email ?? "none"}
 ONE researched detail to open with: ${detail}`,
         schema: DRAFT_SCHEMA,
         maxTokens: 600,
@@ -163,7 +228,7 @@ ONE researched detail to open with: ${detail}`,
       const id = randomUUID();
       const wrapped = `${base}/c/${clickToken(id)}`;
       const body =
-        `${d.greeting.trim()}\n\n` +
+        `${resolveGreeting(p.contact_name, p.email)}\n\n` +
         `${d.detail.trim()} ${WHO_WE_ARE}\n\n` +
         `${block}\n\n` +
         `Here's exactly what a family would receive — take a look [here](${wrapped}).\n\n` +
