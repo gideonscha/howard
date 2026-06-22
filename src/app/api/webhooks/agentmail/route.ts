@@ -160,6 +160,27 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Final fallback: match by SUBJECT. Out-of-office replies are frequently sent
+  // by a mail daemon (mailer-daemon@amazonses.com), so neither thread nor sender
+  // matches — but the subject carries our original ("Out of the Office Re: <our
+  // subject>"). Strip reply/auto prefixes and match the core subject.
+  if (!outreach && msg.subject) {
+    const core = msg.subject
+      .replace(/^((re|fwd?|automatic reply|auto|out of (the )?office( re)?)\s*:?\s*)+/i, "")
+      .trim();
+    if (core.length > 8) {
+      const { data: bySubject } = await supa
+        .from("ph_outreach")
+        .select("*, ph_partners(*)")
+        .eq("status", "sent")
+        .ilike("subject", core)
+        .order("sent_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (bySubject) outreach = bySubject;
+    }
+  }
+
   if (!outreach) {
     // Test-send path: replies to a test thread (recorded in ph_config by
     // /api/run/test-send) are triaged + logged to the Activity feed to prove
