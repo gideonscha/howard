@@ -43,14 +43,20 @@ export const HOWARD_PERSONA = `You are Howard, partner outreach for Magic Portra
 const WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
 const word = (n: number) => (n >= 0 && n <= 10 ? WORDS[n] : String(n));
 
-// The fixed, verbatim offer bullets — identical in every draft, numbers from
-// config. Order: partner gift → commission → family discount. The draft's
-// intro supplies the "...at no cost to you:" lead-in, so no header line here.
+// The fixed, verbatim offer block — identical in every draft, numbers from
+// config. Split by audience so the partner instantly sees their own upside
+// (free product + passive commission) vs. what they give families. Plain-text
+// labels (no markdown — these emails render as plain text).
 export function offerBlock(o: OfferConfig): string {
   return [
-    `— ${cap(word(o.giftSets))} free sets of ${word(o.tilesPerSet)} Star in Heaven portraits (~$${o.giftValue}) to keep and display.`,
-    `— A ${o.commissionPct}% commission on every order your families place, on the after-discount amount.`,
-    `— An exclusive ${o.discountPct}% discount for your families — well beyond anything online — on orders over $${o.minOrder}.`,
+    `Here's the idea, and it costs you nothing:`,
+    ``,
+    `For you:`,
+    `— ${cap(word(o.giftSets))} free sets of ${word(o.tilesPerSet)} Star in Heaven portraits (~$${o.giftValue} value), shipped to you to keep and display.`,
+    `— A ${o.commissionPct}% commission on every order your families place, paid on the amount after their discount.`,
+    ``,
+    `For the families you serve:`,
+    `— An exclusive ${o.discountPct}% discount — well beyond anything available online — on any memorial order over $${o.minOrder}.`,
   ].join("\n");
 }
 

@@ -28,13 +28,14 @@ subject:
 
 greeting (one line, ends with a comma):
 - If a real person's name is known, greet by first name — "Hi Nan,". Two owners → "Hi Rick and Shea,".
-- If the only contact is a generic/role inbox (info@, allcounty@…) or no person is known, use "Hi there,".
+- If no contact name is given but the email address clearly embeds a person's name (e.g. "rick@…" → "Hi Rick,", "j.smith@…" → "Hi J,"/"Hi John," only if unambiguous), use it.
+- Otherwise (generic/role inbox like info@ or allcounty@, or no name at all) use a warm "Hello,".
 - ALWAYS output a greeting.
 
-intro (2–3 short sentences, MUST end with a colon):
+intro (2–3 short sentences, ends with a period — NOT a colon):
 - Start with ONE specific, researched detail about THIS business to show it isn't mass mail (the viewing room, "since 1996", their Texas locations). ONE detail — not a paragraph of praise. Specificity, not flattery.
 - Say who we are in one plain line: "I'm with Magic Portraits — we make hand-finished portraits of pets who've passed, printed on premium tiles".
-- End with a lead-in to the offer that ends in a colon, e.g. "…and I'd like to set {business} up with a memorial gift for your families, at no cost to you:".
+- End with a short sentence handing off to the offer. VARY THIS SENTENCE every time — it must not become a template. Do NOT reuse "I'd like to set your families up with a memorial gift, at no cost to you". Mix it up naturally: "There's something here I think your families would value." / "I'd like to put a gift in your hands for them." / "Here's why I'm writing." etc. End with a period; the offer block that follows has its own lead-in.
 - Do NOT state any numbers, gift contents, commission, or discount — the system inserts the exact offer right after. The offer must stand on its own; don't make it depend on the link.
 
 Tone: warm but never gushing, brief, plain text, sounds like one person wrote it. A busy owner skims — earn the next line. No exclamation points, no "I hope this finds you well". Vary structure across emails; never reuse a sentence skeleton.`;
@@ -141,6 +142,7 @@ Business: ${p.business_name}
 Location: ${p.city ?? "?"}, ${p.state ?? "?"}
 Segment: ${p.segment} / ${p.subtype ?? "?"}
 Contact person (for the greeting — a real name, or "none"): ${p.contact_name ?? "none"}
+Email address (you MAY extract a first name from this for the greeting if no contact person): ${p.email ?? "none"}
 ONE researched detail to open with: ${detail}`,
         schema: DRAFT_SCHEMA,
         maxTokens: 600,
@@ -160,7 +162,7 @@ ONE researched detail to open with: ${detail}`,
         `${d.intro.trim()}\n\n` +
         `${block}\n\n` +
         `Here's exactly what a family would receive: ${wrapped}\n\n` +
-        `If it's a fit, I'll get your two sets in the post.\n\n` +
+        `If it's a fit, I'll get your two sets shipped out.\n\n` +
         `Howard / Magic Portraits`;
 
       const { error: insErr } = await supa.from("ph_outreach").insert({
