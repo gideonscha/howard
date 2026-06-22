@@ -42,6 +42,39 @@ const CLASSIFY_SCHEMA = {
   additionalProperties: false,
 };
 
+// Re-grade not-yet-sendable emails (unverified/risky) through ZeroBounce under
+// the catch-all/role-aware mapping. Fast (one API call each), marker-guarded so
+// each row is re-checked once. Returns how many became sendable.
+export async function reverifyPass(limit = 100): Promise<number> {
+  const supa = db();
+  let recheckedSendable = 0;
+  const { data: rows } = await supa
+    .from("ph_partners")
+    .select("id,email,email_status,enrichment")
+    .in("stage", ["qualified", "queued"])
+    .in("email_status", ["unverified", "risky"])
+    .not("email", "is", null)
+    .or("enrichment->>reverified.is.null,enrichment->>reverified.neq.done")
+    .limit(limit);
+  for (const row of rows ?? []) {
+    try {
+      const status = await verifyEmail(row.email as string);
+      if (status === "verified" || status === "catch_all") recheckedSendable++;
+      await supa
+        .from("ph_partners")
+        .update({
+          email_status: status,
+          enrichment: { ...((row.enrichment as Record<string, unknown>) ?? {}), reverified: "done" },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", row.id);
+    } catch (e) {
+      console.warn(`reverify: failed for ${row.email}: ${(e as Error).message}`);
+    }
+  }
+  return recheckedSendable;
+}
+
 // Fetch the partner's site, classify fit, verify the email. → stage='qualified'
 export async function runEnrich(
   limit = 10
@@ -53,6 +86,13 @@ export async function runEnrich(
   recheckedSendable: number;
 }> {
   const supa = db();
+
+  // Re-verify pass runs FIRST so it isn't starved of function time by the slow
+  // scrape + email-hunt loops below. Re-grades emails that aren't sendable yet —
+  // 'unverified' and 'risky' (catch-all/role become sendable under the new
+  // mapping). A one-time `reverified` marker stops re-checking the same rows.
+  const recheckedSendable = await reverifyPass(Math.max(limit, 100));
+
   const { data: partners, error } = await supa
     .from("ph_partners")
     .select("*")
@@ -230,37 +270,6 @@ Classify this business.`,
         .eq("id", row.id);
     } catch (e) {
       console.warn(`enrich(emailhunt): failed for ${row.business_name}: ${(e as Error).message}`);
-    }
-  }
-
-  // Re-verify pass: pick up emails that aren't sendable yet — 'unverified'
-  // (verification was unavailable when first enriched) AND 'risky' (re-graded
-  // once under the catch-all/role-aware mapping, so catch-all + role inboxes
-  // become sendable). A one-time `reverified` marker stops risky rows being
-  // re-checked every tick.
-  let recheckedSendable = 0;
-  const { data: unverified } = await supa
-    .from("ph_partners")
-    .select("id,email,email_status,enrichment")
-    .in("stage", ["qualified", "queued"])
-    .in("email_status", ["unverified", "risky"])
-    .not("email", "is", null)
-    .or("enrichment->>reverified.is.null,enrichment->>reverified.neq.done")
-    .limit(limit);
-  for (const row of unverified ?? []) {
-    try {
-      const status = await verifyEmail(row.email as string);
-      if (status === "verified" || status === "catch_all") recheckedSendable++;
-      await supa
-        .from("ph_partners")
-        .update({
-          email_status: status,
-          enrichment: { ...((row.enrichment as Record<string, unknown>) ?? {}), reverified: "done" },
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", row.id);
-    } catch (e) {
-      console.warn(`enrich(reverify): failed for ${row.email}: ${(e as Error).message}`);
     }
   }
 
