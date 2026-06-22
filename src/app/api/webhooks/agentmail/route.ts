@@ -48,30 +48,66 @@ export async function POST(req: NextRequest) {
   const supa = db();
 
   // Bounces and complaints → suppression + outreach status; the early warning
-  // for domain reputation on the Health view.
+  // for domain reputation on the Health view. AgentMail's payload shape for
+  // recipients varies (string | {email} | {emailAddress} | {address}), so we
+  // extract defensively and never throw (a 500 here makes AgentMail retry-storm).
   if (event.event_type === "message.bounced" || event.event_type === "message.complained") {
-    const info = event.bounce ?? event.complaint;
     const { logActivity } = await import("@/lib/activity");
-    await logActivity(
-      "suppression",
-      `${event.event_type} — ${(info?.recipients ?? []).join(", ") || "unknown recipient"}`
-    );
-    for (const recipient of info?.recipients ?? []) {
-      await supa.from("ph_suppression").insert({
-        email: recipient.toLowerCase(),
-        reason: event.event_type,
-      });
-      await supa
-        .from("ph_partners")
-        .update({ email_status: "invalid", updated_at: new Date().toISOString() })
-        .ilike("email", recipient);
-    }
-    if (info?.thread_id) {
-      await supa
-        .from("ph_outreach")
-        .update({ status: "bounced", updated_at: new Date().toISOString() })
-        .eq("agentmail_thread_id", info.thread_id)
-        .eq("status", "sent");
+    try {
+      const info = (event.bounce ?? event.complaint ?? {}) as Record<string, unknown>;
+      const ownDomain = (process.env.HOWARD_INBOX ?? "howard@magicportraitspartners.com").split("@")[1];
+
+      // Structured extraction first.
+      const rawRec = (info.recipients ?? info.recipient ?? []) as unknown;
+      const recArr = Array.isArray(rawRec) ? rawRec : [rawRec];
+      let emails = recArr
+        .map((r) => {
+          if (typeof r === "string") return r;
+          if (r && typeof r === "object") {
+            const o = r as Record<string, unknown>;
+            return (o.email ?? o.emailAddress ?? o.address ?? o.recipient) as string | undefined;
+          }
+          return undefined;
+        })
+        .filter((e): e is string => typeof e === "string");
+
+      // Fallback: scrape email-looking strings from the payload, excluding our
+      // own inbox and SES/message-id infrastructure domains.
+      if (emails.length === 0) {
+        const found = JSON.stringify(event).match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) ?? [];
+        emails = found.filter(
+          (e) => !/(amazonses\.com|amazonaws\.com)$/i.test(e) && !e.toLowerCase().endsWith(`@${ownDomain}`)
+        );
+      }
+      emails = [...new Set(emails.map((e) => e.toLowerCase()))];
+
+      await logActivity(
+        "suppression",
+        `${event.event_type} — ${emails.join(", ") || "unparsed recipient"}`,
+        { raw: JSON.stringify(event).slice(0, 600) }
+      );
+
+      for (const email of emails) {
+        const { error } = await supa.from("ph_suppression").insert({ email, reason: event.event_type });
+        if (error && !error.message.includes("duplicate")) {
+          console.error(`suppression insert failed for ${email}: ${error.message}`);
+        }
+        await supa
+          .from("ph_partners")
+          .update({ email_status: "invalid", updated_at: new Date().toISOString() })
+          .ilike("email", email);
+      }
+
+      const threadId = (info.thread_id ?? info.threadId) as string | undefined;
+      if (threadId) {
+        await supa
+          .from("ph_outreach")
+          .update({ status: "bounced", updated_at: new Date().toISOString() })
+          .eq("agentmail_thread_id", threadId)
+          .eq("status", "sent");
+      }
+    } catch (e) {
+      console.error(`bounce/complaint handler error: ${(e as Error).message}`);
     }
     return NextResponse.json({ ok: true });
   }
