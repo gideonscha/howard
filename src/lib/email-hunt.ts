@@ -54,8 +54,12 @@ export async function findEmailOnSite(website: string): Promise<string | null> {
   ];
 
   const candidates = new Map<string, number>(); // email → score
-  for (const path of paths) {
-    const html = await fetchTextDirect(new URL(path, base).toString());
+  // Fetch all candidate pages in PARALLEL — sequentially these would take up to
+  // ~paths×timeout per site, which starves the batch hunt on slow/dead sites.
+  const htmls = await Promise.all(
+    paths.map((path) => fetchTextDirect(new URL(path, base).toString()))
+  );
+  for (const html of htmls) {
     if (!html) continue;
     for (const raw of deobfuscate(html).match(EMAIL_RE) ?? []) {
       const email = raw.toLowerCase();
@@ -71,7 +75,6 @@ export async function findEmailOnSite(website: string): Promise<string | null> {
       else if (!/^(no-?reply|postmaster|abuse|webmaster|admin)$/.test(local)) score += 5; // personal > generic > role-noise
       candidates.set(email, Math.max(candidates.get(email) ?? 0, score));
     }
-    if (candidates.size > 0 && path !== "") break; // contact page hit — good enough
   }
 
   // Prefer an own-domain address whenever one exists, even if a public-mailbox
