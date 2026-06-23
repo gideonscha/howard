@@ -57,7 +57,9 @@ export async function reverifyPass(limit = 100): Promise<number> {
     .eq("email_status", "unverified")
     .not("email", "is", null)
     .limit(limit);
+  const deadline = Date.now() + 60_000; // bound this step so the cron cycle fits 800s
   for (const row of rows ?? []) {
+    if (Date.now() > deadline) break;
     try {
       const status = await verifyEmail(row.email as string);
       if (status === "verified" || status === "catch_all") recheckedSendable++;
@@ -103,9 +105,16 @@ export async function runEnrich(
   if (error) throw error;
 
   const { setProgress } = await import("@/lib/progress");
+  // Time-box the (slow, Firecrawl-bound) main loop so the autopilot cron cycle
+  // can't blow its 800s budget — unprocessed sourced rows resume next tick.
+  const mainDeadline = Date.now() + 2 * 60_000;
   let qualified = 0;
   let i = 0;
   for (const partner of (partners ?? []) as Partner[]) {
+    if (Date.now() > mainDeadline) {
+      console.log(`enrich: main loop time-boxed at ${i}/${partners?.length ?? 0}`);
+      break;
+    }
     i++;
     await setProgress(`enrich: ${i}/${partners?.length ?? 0} — ${partner.business_name}`);
     try {
@@ -222,7 +231,7 @@ Classify this business.`,
   // deadline so the backlog clears in a cycle or two rather than trickling.
   let healAttempted = 0;
   let healed = 0;
-  const healDeadline = Date.now() + 4 * 60_000;
+  const healDeadline = Date.now() + 2 * 60_000;
   const { data: emailless } = await supa
     .from("ph_partners")
     .select("id,website,business_name,enrichment")

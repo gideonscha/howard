@@ -212,7 +212,9 @@ async function searchText(
       "X-Goog-Api-Key": apiKey,
       "X-Goog-FieldMask": FIELD_MASK,
     },
-    body: JSON.stringify(pageToken ? { pageToken } : { textQuery, pageSize: 20 }),
+    // Paged requests must repeat the original textQuery + pageSize (Places New
+    // rejects a pageToken-only body with 400 "Empty text_query").
+    body: JSON.stringify(pageToken ? { textQuery, pageSize: 20, pageToken } : { textQuery, pageSize: 20 }),
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {

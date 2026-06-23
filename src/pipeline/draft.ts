@@ -191,7 +191,7 @@ export async function runDraft(
   const { setProgress } = await import("@/lib/progress");
   // Soft deadline so a large batch can't exceed the function budget — it
   // drafts what it can, the rest resume next cycle (each partner drafted once).
-  const deadline = Date.now() + 6 * 60_000;
+  const deadline = Date.now() + 150_000;
   const usedSubjects: string[] = [];
   let drafted = 0;
   let firstError: string | undefined;
