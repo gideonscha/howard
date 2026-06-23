@@ -1,4 +1,5 @@
 import { db } from "@/lib/supabase";
+import { PLACES_LOCATION_COUNT } from "@/pipeline/discover/places";
 import { dailySendCap, sendingEnabled } from "@/lib/env";
 import { AutoRefresh } from "@/app/run/refresh";
 import { ActivityFeed } from "@/app/activity/feed";
@@ -18,6 +19,7 @@ const STAGES = [
 
 const EMAIL_COLORS: Record<string, string> = {
   verified: "#1a7f4b",
+  catch_all: "#2563eb",
   risky: "#b8860b",
   invalid: "#b42318",
   unverified: "#9ca3af",
@@ -229,7 +231,10 @@ export default async function MetricsPage() {
     { data: targetRow },
     { data: placesCursorRow },
   ] = await Promise.all([
-    supa.from("ph_partners").select("stage,segment,email_status,fit_score,source,sample_status,created_at,state"),
+    supa
+      .from("ph_partners")
+      .select("stage,segment,email_status,fit_score,source,sample_status,created_at,state")
+      .limit(50000),
     supa.from("ph_send_log").select("dry_run,sent_at").gte("sent_at", since14.toISOString()),
     supa.from("ph_referrals").select("orders_count,revenue"),
     supa.from("ph_suppression").select("id", { count: "exact", head: true }),
@@ -244,7 +249,7 @@ export default async function MetricsPage() {
 
   const inWarehouse = (p: { stage: string; email_status: string; fit_score: number | null }) =>
     ["qualified", "queued", "contacted", "replied", "negotiating", "signed", "live"].includes(p.stage) &&
-    (p.email_status === "verified" || (p.fit_score ?? 0) >= 60);
+    (p.email_status === "verified" || p.email_status === "catch_all" || (p.fit_score ?? 0) >= 60);
   const warehouse = ps.filter(inWarehouse).length;
   const warehouseMemorial = ps.filter((p) => inWarehouse(p) && p.segment === "memorial").length;
   const warehouseVet = ps.filter((p) => inWarehouse(p) && p.segment === "vet").length;
@@ -274,10 +279,10 @@ export default async function MetricsPage() {
     if (p.email_status === "verified") s.verified++;
     byState.set(p.state, s);
   }
-  let sweptStates = 0;
+  let sweptLocs = 0;
   try {
     const cursor = JSON.parse(placesCursorRow?.value ?? "{}");
-    sweptStates = cursor.done ? 50 : Number(cursor.stateIdx) || 0;
+    sweptLocs = cursor.done ? PLACES_LOCATION_COUNT : Number(cursor.locIdx) || 0;
   } catch {
     /* no cursor yet */
   }
@@ -335,7 +340,7 @@ export default async function MetricsPage() {
         <div className="stat"><div className="v">{ps.length}</div><div className="l">partners total</div></div>
         <div className="stat">
           <div className="v" style={{ color: "#1a7f4b" }}>
-            {ps.filter((p) => p.email_status === "verified" && p.stage !== "declined").length}
+            {ps.filter((p) => (p.email_status === "verified" || p.email_status === "catch_all") && p.stage !== "declined").length}
           </div>
           <div className="l">verified emails (sendable)</div>
         </div>
@@ -371,7 +376,7 @@ export default async function MetricsPage() {
         <div className="row">
           <h2 style={{ marginTop: 0 }}>Coverage map</h2>
           <span className="pill pill-stage">
-            Places sweep: {sweptStates}/50 states
+            Places sweep: {sweptLocs}/{PLACES_LOCATION_COUNT} metros
           </span>
         </div>
         <UsTileMap byState={byState} />

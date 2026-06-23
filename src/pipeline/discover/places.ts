@@ -128,6 +128,7 @@ const STATES = [
 
 // Cities first (the new long-tail ground), states as a trailing rural backstop.
 const LOCATIONS = [...CITIES, ...STATES];
+export const PLACES_LOCATION_COUNT = LOCATIONS.length;
 
 interface PlacesCampaign {
   cursorKey: string;

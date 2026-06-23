@@ -28,7 +28,8 @@ export default async function Pipeline({
 
   const { data: all } = await supa
     .from("ph_partners")
-    .select("id,stage,segment,state,source");
+    .select("id,stage,segment,state,source")
+    .limit(50000);
   const counts = Object.fromEntries(STAGES.map((s) => [s, 0])) as Record<string, number>;
   for (const p of all ?? []) counts[p.stage] = (counts[p.stage] ?? 0) + 1;
 
