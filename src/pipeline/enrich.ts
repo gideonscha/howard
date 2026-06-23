@@ -42,9 +42,11 @@ const CLASSIFY_SCHEMA = {
   additionalProperties: false,
 };
 
-// Re-grade not-yet-sendable emails (unverified/risky) through ZeroBounce under
-// the catch-all/role-aware mapping. Fast (one API call each), marker-guarded so
-// each row is re-checked once. Returns how many became sendable.
+// Re-verify 'unverified' emails (verification was unavailable when first
+// enriched) through ZeroBounce. We do NOT re-check 'risky' rows: re-grading
+// them converted 0 to catch-all (they're genuinely 'unknown', not catch-all/
+// role), so re-checking just burns ZeroBounce calls. New discoveries already
+// get the correct catch-all/role mapping on their first verification.
 export async function reverifyPass(limit = 100): Promise<number> {
   const supa = db();
   let recheckedSendable = 0;
@@ -52,9 +54,8 @@ export async function reverifyPass(limit = 100): Promise<number> {
     .from("ph_partners")
     .select("id,email,email_status,enrichment")
     .in("stage", ["qualified", "queued"])
-    .in("email_status", ["unverified", "risky"])
+    .eq("email_status", "unverified")
     .not("email", "is", null)
-    .or("enrichment->>reverified.is.null,enrichment->>reverified.neq.done")
     .limit(limit);
   for (const row of rows ?? []) {
     try {
