@@ -1,5 +1,6 @@
 import { db } from "@/lib/supabase";
-import { dailySendCap, sendingEnabled } from "@/lib/env";
+import { sendingEnabled } from "@/lib/env";
+import { resolveDailyCap } from "@/pipeline/send";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +38,7 @@ export default async function Health() {
   ]);
   const uniqueClickers = new Set((clickPartners ?? []).map((c) => c.partner_id).filter(Boolean)).size;
 
-  const cap = dailySendCap();
+  const cap = await resolveDailyCap();
   const live = sendingEnabled();
   const bounceRate = (totalSent ?? 0) === 0 ? 0 : ((bounced ?? 0) / (totalSent ?? 1)) * 100;
   const sent = sentToday.count ?? 0;

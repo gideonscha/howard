@@ -1,6 +1,7 @@
 import { db, fetchAll } from "@/lib/supabase";
 import { PLACES_LOCATION_COUNT } from "@/pipeline/discover/places";
-import { dailySendCap, sendingEnabled } from "@/lib/env";
+import { sendingEnabled } from "@/lib/env";
+import { resolveDailyCap } from "@/pipeline/send";
 import { AutoRefresh } from "@/app/run/refresh";
 import { ActivityFeed } from "@/app/activity/feed";
 
@@ -307,6 +308,7 @@ export default async function MetricsPage() {
   const orders = (referrals ?? []).reduce((s, r) => s + Number(r.orders_count), 0);
   const revenue = (referrals ?? []).reduce((s, r) => s + Number(r.revenue), 0);
   const pct = Math.min(100, Math.round((warehouse / target) * 100));
+  const cap = await resolveDailyCap();
 
   return (
     <>
@@ -348,7 +350,7 @@ export default async function MetricsPage() {
         </div>
         <div className="stat"><div className="v">{draftsPending ?? 0}</div><div className="l">drafts awaiting approval</div></div>
         <div className="stat"><div className="v">{needsAttention ?? 0}</div><div className="l">need attention</div></div>
-        <div className="stat"><div className="v">{sentToday}/{dailySendCap()}</div><div className="l">sent today / cap</div></div>
+        <div className="stat"><div className="v">{sentToday}/{cap}</div><div className="l">sent today / cap</div></div>
         <div className="stat"><div className="v">{contacted}</div><div className="l">contacted</div></div>
         <div className="stat"><div className="v">{replies}</div><div className="l">replied+</div></div>
         <div className="stat"><div className="v">{samples}</div><div className="l">sample requests</div></div>

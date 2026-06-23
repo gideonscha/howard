@@ -20,9 +20,22 @@ async function sentTodayCount(): Promise<number> {
 // Sends approved outreach. Gated by SENDING_ENABLED; enforces the daily cap;
 // refuses non-verified emails and suppressed addresses; appends CAN-SPAM footer
 // (in lib/agentmail). Approved-only: nothing leaves without Gideon's approval.
+// Daily cap: ph_config.daily_send_cap is the live dial (changeable without a
+// deploy, like the other autopilot knobs); falls back to the DAILY_SEND_CAP env
+// var / default when the row is absent or unparseable.
+export async function resolveDailyCap(): Promise<number> {
+  const { data } = await db()
+    .from("ph_config")
+    .select("value")
+    .eq("key", "daily_send_cap")
+    .maybeSingle();
+  const n = Number(data?.value);
+  return Number.isFinite(n) && n > 0 ? n : dailySendCap();
+}
+
 export async function runSend(): Promise<{ sent: number; dryRun: number; skipped: string[] }> {
   const supa = db();
-  const cap = dailySendCap();
+  const cap = await resolveDailyCap();
   const already = await sentTodayCount();
   const skipped: string[] = [];
   let sent = 0;
