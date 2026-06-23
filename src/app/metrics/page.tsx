@@ -1,4 +1,4 @@
-import { db } from "@/lib/supabase";
+import { db, fetchAll } from "@/lib/supabase";
 import { PLACES_LOCATION_COUNT } from "@/pipeline/discover/places";
 import { dailySendCap, sendingEnabled } from "@/lib/env";
 import { AutoRefresh } from "@/app/run/refresh";
@@ -222,7 +222,7 @@ export default async function MetricsPage() {
   midnight.setUTCHours(0, 0, 0, 0);
 
   const [
-    { data: partners },
+    partners,
     { data: sendLog },
     { data: referrals },
     { count: suppression },
@@ -231,10 +231,12 @@ export default async function MetricsPage() {
     { data: targetRow },
     { data: placesCursorRow },
   ] = await Promise.all([
-    supa
-      .from("ph_partners")
-      .select("stage,segment,email_status,fit_score,source,sample_status,created_at,state")
-      .limit(50000),
+    fetchAll<{
+      stage: string; segment: string; email_status: string; fit_score: number | null;
+      source: string; sample_status: string; created_at: string; state: string | null;
+    }>(() =>
+      supa.from("ph_partners").select("stage,segment,email_status,fit_score,source,sample_status,created_at,state")
+    ),
     supa.from("ph_send_log").select("dry_run,sent_at").gte("sent_at", since14.toISOString()),
     supa.from("ph_referrals").select("orders_count,revenue"),
     supa.from("ph_suppression").select("id", { count: "exact", head: true }),

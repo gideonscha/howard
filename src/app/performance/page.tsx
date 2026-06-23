@@ -1,4 +1,4 @@
-import { db } from "@/lib/supabase";
+import { db, fetchAll } from "@/lib/supabase";
 import { sendingEnabled } from "@/lib/env";
 import { Partner } from "@/pipeline/types";
 
@@ -14,12 +14,12 @@ function sourceKey(source: string): string {
 
 export default async function Performance() {
   const supa = db();
-  const [{ data: partners }, { data: referrals }] = await Promise.all([
-    supa.from("ph_partners").select("*").limit(50000),
+  const [partners, { data: referrals }] = await Promise.all([
+    fetchAll<Partner>(() => supa.from("ph_partners").select("*")),
     supa.from("ph_referrals").select("*, ph_partners(business_name,segment,state)"),
   ]);
 
-  const ps = (partners ?? []) as Partner[];
+  const ps = partners as Partner[];
   const contactedStages = ["contacted", "replied", "negotiating", "signed", "live"];
   const repliedStages = ["replied", "negotiating", "signed", "live"];
   const anyContacted = ps.some((p) => contactedStages.includes(p.stage));

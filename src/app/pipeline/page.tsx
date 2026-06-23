@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { db } from "@/lib/supabase";
+import { db, fetchAll } from "@/lib/supabase";
 import { Partner } from "@/pipeline/types";
 
 export const dynamic = "force-dynamic";
@@ -26,12 +26,11 @@ export default async function Pipeline({
   const PAGE_SIZE = 50;
   const page = Math.max(1, Number(params.page) || 1);
 
-  const { data: all } = await supa
-    .from("ph_partners")
-    .select("id,stage,segment,state,source")
-    .limit(50000);
+  const all = await fetchAll<{ stage: string }>(() =>
+    supa.from("ph_partners").select("id,stage,segment,state,source")
+  );
   const counts = Object.fromEntries(STAGES.map((s) => [s, 0])) as Record<string, number>;
-  for (const p of all ?? []) counts[p.stage] = (counts[p.stage] ?? 0) + 1;
+  for (const p of all) counts[p.stage] = (counts[p.stage] ?? 0) + 1;
 
   let q = supa
     .from("ph_partners")
