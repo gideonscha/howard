@@ -23,10 +23,23 @@ const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const ASSET = /\.(png|jpe?g|gif|svg|webp|css|js)$|@\d+x/i;
 const GENERIC_PREFERENCE = ["info", "contact", "hello", "office", "care", "support"];
 
-// Hunt for a contact email: homepage + common contact/about paths, mailto:
-// links and plain-text addresses. Only domain-aligned addresses are eligible
-// (own-domain or a public mailbox) — a foreign corporate domain found on the
-// page is rejected, so one business's site can't hand us another's inbox.
+// Un-obfuscate addresses small sites hide from scrapers: HTML entities for "@",
+// and "name [at] domain [dot] com" / "(at)" / "{at}" forms. Only the bracketed
+// at/dot forms (unambiguous) are converted — plain " at "/" dot " words are too
+// false-positive-prone.
+function deobfuscate(html: string): string {
+  return html
+    .replace(/&#0*64;|&commat;/gi, "@")
+    .replace(/&#0*46;/gi, ".")
+    .replace(/\s*[\[\(\{]\s*(?:at|@)\s*[\]\)\}]\s*/gi, "@")
+    .replace(/\s*[\[\(\{]\s*(?:dot|\.)\s*[\]\)\}]\s*/gi, ".");
+}
+
+// Hunt for a contact email: homepage + common contact/about/team paths, mailto:
+// links, plain-text and lightly-obfuscated addresses. Only domain-aligned
+// addresses are eligible (own-domain or a public mailbox) — a foreign corporate
+// domain found on the page is rejected, so one business's site can't hand us
+// another's inbox.
 export async function findEmailOnSite(website: string): Promise<string | null> {
   let base: URL;
   try {
@@ -35,13 +48,16 @@ export async function findEmailOnSite(website: string): Promise<string | null> {
     return null;
   }
   const siteDomain = base.hostname.replace(/^www\./, "");
-  const paths = ["", "/contact", "/contact-us", "/contactus", "/about", "/about-us"];
+  const paths = [
+    "", "/contact", "/contact-us", "/contactus", "/contact.html", "/about",
+    "/about-us", "/team", "/our-team", "/staff", "/locations", "/get-in-touch",
+  ];
 
   const candidates = new Map<string, number>(); // email → score
   for (const path of paths) {
     const html = await fetchTextDirect(new URL(path, base).toString());
     if (!html) continue;
-    for (const raw of html.match(EMAIL_RE) ?? []) {
+    for (const raw of deobfuscate(html).match(EMAIL_RE) ?? []) {
       const email = raw.toLowerCase();
       if (ASSET.test(email) || isJunkEmail(email)) continue;
       // Domain-alignment guard: reject foreign corporate domains outright.
