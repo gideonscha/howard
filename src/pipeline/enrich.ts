@@ -42,12 +42,35 @@ const CLASSIFY_SCHEMA = {
   additionalProperties: false,
 };
 
-// Re-verify 'unverified' emails (verification was unavailable when first
-// enriched) through ZeroBounce. We do NOT re-check 'risky' rows: re-grading
-// them converted 0 to catch-all (they're genuinely 'unknown', not catch-all/
-// role), so re-checking just burns ZeroBounce calls. New discoveries already
-// get the correct catch-all/role mapping on their first verification.
-export async function reverifyPass(limit = 100): Promise<number> {
+// Concurrency-limited worker pool: `concurrency` workers pull from a shared
+// queue until items are exhausted or the deadline passes. Enrichment is
+// per-partner-independent and almost entirely I/O wait (Firecrawl scrape +
+// Anthropic classify + ZeroBounce verify), so running many concurrently is the
+// single biggest throughput lever — sequential processing was the bottleneck
+// that let discovery outrun enrichment ~10x. Returns how many items ran.
+async function processPool<T>(
+  items: T[],
+  concurrency: number,
+  deadline: number,
+  worker: (item: T) => Promise<void>
+): Promise<number> {
+  let idx = 0;
+  let processed = 0;
+  async function run() {
+    while (idx < items.length && Date.now() < deadline) {
+      const item = items[idx++];
+      await worker(item);
+      processed++;
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) || 1 }, run));
+  return processed;
+}
+
+// Re-verify 'unverified' emails (ZeroBounce was rate-limited/unavailable when
+// first enriched). verifyEmail now throws on a no-status/error response, so a
+// transient failure is re-tried next tick instead of sticking as 'unverified'.
+export async function reverifyPass(limit = 200, concurrency = 10): Promise<number> {
   const supa = db();
   let recheckedSendable = 0;
   const { data: rows } = await supa
@@ -57,9 +80,8 @@ export async function reverifyPass(limit = 100): Promise<number> {
     .eq("email_status", "unverified")
     .not("email", "is", null)
     .limit(limit);
-  const deadline = Date.now() + 60_000; // bound this step so the cron cycle fits 800s
-  for (const row of rows ?? []) {
-    if (Date.now() > deadline) break;
+  const deadline = Date.now() + 90_000;
+  await processPool(rows ?? [], concurrency, deadline, async (row) => {
     try {
       const status = await verifyEmail(row.email as string);
       if (status === "verified" || status === "catch_all") recheckedSendable++;
@@ -74,13 +96,123 @@ export async function reverifyPass(limit = 100): Promise<number> {
     } catch (e) {
       console.warn(`reverify: failed for ${row.email}: ${(e as Error).message}`);
     }
-  }
+  });
   return recheckedSendable;
 }
 
-// Fetch the partner's site, classify fit, verify the email. → stage='qualified'
+// Fetch one partner's site, classify fit, find + verify the email. Mutates the
+// row to stage='qualified'|'declined'. Returns true if qualified. Self-contained
+// so it can run inside the concurrent pool.
+async function enrichOne(partner: Partner): Promise<boolean> {
+  const supa = db();
+  let siteContent = "";
+  if (partner.website) {
+    try {
+      siteContent = (await scrapeMarkdown(partner.website)).slice(0, 20000);
+    } catch {
+      siteContent = "";
+    }
+  }
+
+  const c = await structured<Classification>({
+    system:
+      "You qualify US pet-related businesses as referral partners for a premium pet memorial portrait product. The partner must SERVE GRIEVING PET FAMILIES DIRECTLY at the end-of-life moment.\n" +
+      "- MEMORIAL segment qualifies if: pet crematory, pet cemetery, aftercare provider, or in-home euthanasia service.\n" +
+      "- VET segment qualifies ONLY if the clinic offers end-of-life services — euthanasia, pet hospice/palliative care, cremation/aftercare, or memorial services. Set offers_aftercare=true when they handle cremation/aftercare (in-house or coordinated). A GENERAL veterinary practice with NO end-of-life or aftercare emphasis is qualified=false (we don't want every vet, only those at the memorial moment).\n" +
+      "Mark qualified=false for: out of business, not pet-related, human-only services, outside the US, and suppliers/manufacturers/vendors that sell TO aftercare businesses rather than to families (urn wholesalers, keepsake manufacturers, body-bag suppliers, software, marketing services, association staff). Be factual.",
+    user: `Business: ${partner.business_name} (${partner.city ?? "?"}, ${partner.state ?? "?"})
+Segment guess: ${partner.segment} / ${partner.subtype ?? "?"}
+Known email: ${partner.email ?? "none"}
+Website content (markdown, may be empty):
+---
+${siteContent || "(no website content available)"}
+---
+Classify this business.`,
+    schema: CLASSIFY_SCHEMA,
+  });
+
+  // Domain-alignment guard: a scraped/LLM-extracted address is only trusted if
+  // it matches the business's own domain (or is a public mailbox). A foreign
+  // corporate domain (another business's inbox on this page) is dropped so the
+  // ladder below can hunt for the right one.
+  let email = (c.contact_email ?? partner.email)?.trim().toLowerCase() || null;
+  if (email && !emailDomainAligned(email, partner.website)) {
+    console.log(`enrich: dropped misaligned email ${email} for ${partner.business_name} (site ${partner.website ?? "none"})`);
+    email = null;
+  }
+  let huntedName: string | null = null;
+  let emailSource: string | null = email ? "site" : null;
+  // Email ladder: site-claimed → contact-page hunt (free) → Hunter (1 credit).
+  if (!email && partner.website) {
+    const { findEmailOnSite } = await import("@/lib/email-hunt");
+    email = await findEmailOnSite(partner.website);
+    if (email) emailSource = "contact_page";
+    if (!email) {
+      try {
+        const { hunterDomainSearch } = await import("@/lib/hunter");
+        const hit = await hunterDomainSearch(partner.website);
+        if (hit && emailDomainAligned(hit.email, partner.website)) {
+          email = hit.email;
+          huntedName = hit.contactName;
+          emailSource = "hunter";
+        }
+      } catch (e) {
+        console.warn(`enrich(hunter): ${partner.business_name}: ${(e as Error).message}`);
+      }
+    }
+  }
+  let emailStatus: Partner["email_status"] = "unverified";
+  if (email) {
+    try {
+      emailStatus = await verifyEmail(email);
+    } catch (e) {
+      console.warn(`enrich: verification failed for ${email}: ${(e as Error).message}`);
+    }
+  }
+
+  // Cross-record uniqueness: if this email already sits on a DIFFERENT business
+  // (different website domain), it's a shared/parent inbox being stamped onto
+  // unrelated records — flag for manual review, don't trust it.
+  let sharedConflict = false;
+  if (email) {
+    const { data: dupes } = await supa
+      .from("ph_partners")
+      .select("id,website")
+      .eq("email", email)
+      .neq("id", partner.id);
+    const mine = domainOf(partner.website);
+    sharedConflict = (dupes ?? []).some((d) => domainOf(d.website) !== mine);
+  }
+
+  await supa
+    .from("ph_partners")
+    .update({
+      email,
+      email_status: emailStatus,
+      contact_name: huntedName ?? c.contact_name ?? partner.contact_name,
+      offers_aftercare: c.offers_aftercare,
+      sells_memorial_products: c.sells_memorial_products,
+      enrichment: {
+        business_detail: c.business_detail,
+        disqualify_reason: c.disqualify_reason,
+        email_source: emailSource,
+        // invalid/missing email or a shared cross-business inbox → manual touch
+        // via contact form / phone, not an automated send.
+        needs_manual_contact: !email || emailStatus === "invalid" || sharedConflict,
+        ...(sharedConflict ? { shared_email_conflict: true } : {}),
+      },
+      stage: c.qualified ? "qualified" : "declined",
+      notes: c.qualified ? partner.notes : c.disqualify_reason,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", partner.id);
+  return c.qualified;
+}
+
+// Drain the sourced backlog: classify fit + find/verify email, concurrently.
 export async function runEnrich(
-  limit = 10
+  limit = 300,
+  concurrency = 10
 ): Promise<{
   processed: number;
   qualified: number;
@@ -90,11 +222,9 @@ export async function runEnrich(
 }> {
   const supa = db();
 
-  // Re-verify pass runs FIRST so it isn't starved of function time by the slow
-  // scrape + email-hunt loops below. Re-grades emails that aren't sendable yet —
-  // 'unverified' and 'risky' (catch-all/role become sendable under the new
-  // mapping). A one-time `reverified` marker stops re-checking the same rows.
-  const recheckedSendable = await reverifyPass(Math.max(limit, 100));
+  // Re-verify pass runs FIRST so the rows that hit a transient ZeroBounce
+  // failure get another shot before we spend the cycle on fresh scrapes.
+  const recheckedSendable = await reverifyPass(Math.max(limit, 200), concurrency);
 
   const { data: partners, error } = await supa
     .from("ph_partners")
@@ -105,136 +235,34 @@ export async function runEnrich(
   if (error) throw error;
 
   const { setProgress } = await import("@/lib/progress");
-  // Time-box the (slow, Firecrawl-bound) main loop so the autopilot cron cycle
-  // can't blow its 800s budget — unprocessed sourced rows resume next tick.
-  // Enrichment is the bottleneck (discovery outruns it), so it gets the largest
-  // share of the cycle: ~4 min here + 1 min heal + 1 min reverify, leaving room
-  // for discover/score/draft under 800s.
-  const mainDeadline = Date.now() + 4 * 60_000;
+  // Generous deadline + concurrency does the heavy lifting; the deadline only
+  // exists as a backstop so a slow batch can't blow the 800s cron budget.
+  // Unprocessed sourced rows simply resume next tick.
+  const mainDeadline = Date.now() + 7 * 60_000;
   let qualified = 0;
-  let i = 0;
-  for (const partner of (partners ?? []) as Partner[]) {
-    if (Date.now() > mainDeadline) {
-      console.log(`enrich: main loop time-boxed at ${i}/${partners?.length ?? 0}`);
-      break;
+  let done = 0;
+  const total = partners?.length ?? 0;
+  const processed = await processPool(
+    (partners ?? []) as Partner[],
+    concurrency,
+    mainDeadline,
+    async (partner) => {
+      try {
+        if (await enrichOne(partner)) qualified++;
+      } catch (e) {
+        console.error(`enrich: failed for ${partner.id}: ${(e as Error).message}`);
+      }
+      done++;
+      if (done % concurrency === 0) await setProgress(`enrich: ${done}/${total}`);
     }
-    i++;
-    await setProgress(`enrich: ${i}/${partners?.length ?? 0} — ${partner.business_name}`);
-    try {
-      let siteContent = "";
-      if (partner.website) {
-        try {
-          siteContent = (await scrapeMarkdown(partner.website)).slice(0, 20000);
-        } catch {
-          siteContent = "";
-        }
-      }
+  );
 
-      const c = await structured<Classification>({
-        system:
-          "You qualify US pet-related businesses as referral partners for a premium pet memorial portrait product. The partner must SERVE GRIEVING PET FAMILIES DIRECTLY at the end-of-life moment.\n" +
-          "- MEMORIAL segment qualifies if: pet crematory, pet cemetery, aftercare provider, or in-home euthanasia service.\n" +
-          "- VET segment qualifies ONLY if the clinic offers end-of-life services — euthanasia, pet hospice/palliative care, cremation/aftercare, or memorial services. Set offers_aftercare=true when they handle cremation/aftercare (in-house or coordinated). A GENERAL veterinary practice with NO end-of-life or aftercare emphasis is qualified=false (we don't want every vet, only those at the memorial moment).\n" +
-          "Mark qualified=false for: out of business, not pet-related, human-only services, outside the US, and suppliers/manufacturers/vendors that sell TO aftercare businesses rather than to families (urn wholesalers, keepsake manufacturers, body-bag suppliers, software, marketing services, association staff). Be factual.",
-        user: `Business: ${partner.business_name} (${partner.city ?? "?"}, ${partner.state ?? "?"})
-Segment guess: ${partner.segment} / ${partner.subtype ?? "?"}
-Known email: ${partner.email ?? "none"}
-Website content (markdown, may be empty):
----
-${siteContent || "(no website content available)"}
----
-Classify this business.`,
-        schema: CLASSIFY_SCHEMA,
-      });
-
-      // Domain-alignment guard: a scraped/LLM-extracted address is only trusted
-      // if it matches the business's own domain (or is a public mailbox). A
-      // foreign corporate domain (another business's inbox on this page) is
-      // dropped so the ladder below can hunt for the right one.
-      let email = (c.contact_email ?? partner.email)?.trim().toLowerCase() || null;
-      if (email && !emailDomainAligned(email, partner.website)) {
-        console.log(`enrich: dropped misaligned email ${email} for ${partner.business_name} (site ${partner.website ?? "none"})`);
-        email = null;
-      }
-      let huntedName: string | null = null;
-      let emailSource: string | null = email ? "site" : null;
-      // Email ladder: site-claimed → contact-page hunt (free) → Hunter (1 credit).
-      if (!email && partner.website) {
-        const { findEmailOnSite } = await import("@/lib/email-hunt");
-        email = await findEmailOnSite(partner.website);
-        if (email) emailSource = "contact_page";
-        if (!email) {
-          try {
-            const { hunterDomainSearch } = await import("@/lib/hunter");
-            const hit = await hunterDomainSearch(partner.website);
-            if (hit && emailDomainAligned(hit.email, partner.website)) {
-              email = hit.email;
-              huntedName = hit.contactName;
-              emailSource = "hunter";
-            }
-          } catch (e) {
-            console.warn(`enrich(hunter): ${partner.business_name}: ${(e as Error).message}`);
-          }
-        }
-      }
-      let emailStatus: Partner["email_status"] = "unverified";
-      if (email) {
-        try {
-          emailStatus = await verifyEmail(email);
-        } catch (e) {
-          console.warn(`enrich: verification failed for ${email}: ${(e as Error).message}`);
-        }
-      }
-
-      // Cross-record uniqueness: if this email already sits on a DIFFERENT
-      // business (different website domain), it's a shared/parent inbox being
-      // stamped onto unrelated records — flag for manual review, don't trust it.
-      let sharedConflict = false;
-      if (email) {
-        const { data: dupes } = await supa
-          .from("ph_partners")
-          .select("id,website")
-          .eq("email", email)
-          .neq("id", partner.id);
-        const mine = domainOf(partner.website);
-        sharedConflict = (dupes ?? []).some((d) => domainOf(d.website) !== mine);
-      }
-
-      await supa
-        .from("ph_partners")
-        .update({
-          email,
-          email_status: emailStatus,
-          contact_name: huntedName ?? c.contact_name ?? partner.contact_name,
-          offers_aftercare: c.offers_aftercare,
-          sells_memorial_products: c.sells_memorial_products,
-          enrichment: {
-            business_detail: c.business_detail,
-            disqualify_reason: c.disqualify_reason,
-            email_source: emailSource,
-            // invalid/missing email or a shared cross-business inbox → manual
-            // touch via contact form / phone, not an automated send.
-            needs_manual_contact: !email || emailStatus === "invalid" || sharedConflict,
-            ...(sharedConflict ? { shared_email_conflict: true } : {}),
-          },
-          stage: c.qualified ? "qualified" : "declined",
-          notes: c.qualified ? partner.notes : c.disqualify_reason,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", partner.id);
-      if (c.qualified) qualified++;
-    } catch (e) {
-      console.error(`enrich: failed for ${partner.id}: ${(e as Error).message}`);
-    }
-  }
-  // Email-hunt healing pass: email-less qualified/queued partners get the
-  // (now domain-guarded) contact hunt retried. Freshly-quarantined rows — ones
-  // that just had a misaligned contact stripped — are ordered to the FRONT so
-  // recovery targets them first, and we work a large batch under a soft
-  // deadline so the backlog clears in a cycle or two rather than trickling.
+  // Email-hunt healing pass: email-less qualified/queued partners get the (now
+  // domain-guarded) contact hunt retried, concurrently. Freshly-quarantined
+  // rows are ordered to the FRONT so recovery targets them first.
   let healAttempted = 0;
   let healed = 0;
-  const healDeadline = Date.now() + 60_000;
+  const healDeadline = Date.now() + 2 * 60_000;
   const { data: emailless } = await supa
     .from("ph_partners")
     .select("id,website,business_name,enrichment")
@@ -243,13 +271,8 @@ Classify this business.`,
     .not("website", "is", null)
     .or("enrichment->>email_hunted.is.null,enrichment->>email_hunted.neq.true")
     .order("enrichment->>quarantined_at", { ascending: false, nullsFirst: false })
-    .limit(Math.max(limit, 150));
-  for (const row of emailless ?? []) {
-    if (Date.now() > healDeadline) {
-      console.log(`enrich(heal): time-boxed at ${healAttempted}; resuming next tick`);
-      break;
-    }
-    healAttempted++;
+    .limit(Math.max(limit, 200));
+  healAttempted = await processPool(emailless ?? [], concurrency, healDeadline, async (row) => {
     try {
       const { findEmailOnSite } = await import("@/lib/email-hunt");
       let found = await findEmailOnSite(row.website as string);
@@ -265,7 +288,7 @@ Classify this business.`,
         }
       }
       const status = found ? await verifyEmail(found).catch(() => "unverified" as const) : "unverified";
-      if (found && status === "verified") healed++;
+      if (found && (status === "verified" || status === "catch_all")) healed++;
       await supa
         .from("ph_partners")
         .update({
@@ -274,8 +297,7 @@ Classify this business.`,
           enrichment: {
             ...((row.enrichment as Record<string, unknown>) ?? {}),
             email_hunted: true,
-            // clear the manual flag only once a real, verified contact is found
-            ...(found && status === "verified" ? { needs_manual_contact: false } : {}),
+            ...(found && (status === "verified" || status === "catch_all") ? { needs_manual_contact: false } : {}),
             ...(foundSource ? { email_source: foundSource } : {}),
           },
           updated_at: new Date().toISOString(),
@@ -284,7 +306,7 @@ Classify this business.`,
     } catch (e) {
       console.warn(`enrich(emailhunt): failed for ${row.business_name}: ${(e as Error).message}`);
     }
-  }
+  });
 
-  return { processed: partners?.length ?? 0, qualified, healAttempted, healed, recheckedSendable };
+  return { processed, qualified, healAttempted, healed, recheckedSendable };
 }

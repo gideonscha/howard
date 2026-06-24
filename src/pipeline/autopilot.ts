@@ -13,7 +13,8 @@ import { runDraft } from "./draft";
 //   autopilot_enabled        'true' | 'false'        (default true)
 //   prospect_target          warehouse goal          (default 2000)
 //   autopilot_daily_credits  Firecrawl credits/day   (default 400)
-//   autopilot_enrich_per_tick                        (default 15)
+//   autopilot_enrich_per_tick rows fetched to enrich (default 300)
+//   enrich_concurrency       parallel enrich workers (default 10)
 //   draft_queue_floor        drafts kept pending     (default 10)
 
 // Two Places campaigns carry the volume now, swept at city/metro granularity:
@@ -50,7 +51,8 @@ export async function runAutopilot(): Promise<Record<string, unknown>> {
 
   const target = num(config.prospect_target, 2000);
   const dailyCredits = num(config.autopilot_daily_credits, 400);
-  const enrichPerTick = num(config.autopilot_enrich_per_tick, 15);
+  const enrichPerTick = num(config.autopilot_enrich_per_tick, 300);
+  const enrichConcurrency = num(config.enrich_concurrency, 10);
   const draftPerCycle = num(config.draft_per_cycle, 60);
 
   const summary: Record<string, unknown> = {};
@@ -81,9 +83,10 @@ export async function runAutopilot(): Promise<Record<string, unknown>> {
     summary.discover = "skipped — target reached";
   }
 
-  // 2. Enrich a batch of whatever discovery produced.
+  // 2. Enrich a batch of whatever discovery produced — concurrently, since
+  //    enrichment (not discovery) is the throughput bottleneck.
   try {
-    summary.enrich = await runEnrich(enrichPerTick);
+    summary.enrich = await runEnrich(enrichPerTick, enrichConcurrency);
   } catch (e) {
     summary.enrich = { error: (e as Error).message };
   }
