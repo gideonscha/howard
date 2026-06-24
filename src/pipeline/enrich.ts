@@ -107,7 +107,10 @@ export async function runEnrich(
   const { setProgress } = await import("@/lib/progress");
   // Time-box the (slow, Firecrawl-bound) main loop so the autopilot cron cycle
   // can't blow its 800s budget — unprocessed sourced rows resume next tick.
-  const mainDeadline = Date.now() + 2 * 60_000;
+  // Enrichment is the bottleneck (discovery outruns it), so it gets the largest
+  // share of the cycle: ~4 min here + 1 min heal + 1 min reverify, leaving room
+  // for discover/score/draft under 800s.
+  const mainDeadline = Date.now() + 4 * 60_000;
   let qualified = 0;
   let i = 0;
   for (const partner of (partners ?? []) as Partner[]) {
@@ -231,7 +234,7 @@ Classify this business.`,
   // deadline so the backlog clears in a cycle or two rather than trickling.
   let healAttempted = 0;
   let healed = 0;
-  const healDeadline = Date.now() + 2 * 60_000;
+  const healDeadline = Date.now() + 60_000;
   const { data: emailless } = await supa
     .from("ph_partners")
     .select("id,website,business_name,enrichment")

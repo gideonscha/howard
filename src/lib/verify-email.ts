@@ -18,7 +18,14 @@ export async function verifyEmail(email: string): Promise<EmailStatus> {
   const url = `https://api.zerobounce.net/v2/validate?api_key=${encodeURIComponent(key)}&email=${encodeURIComponent(email)}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
   if (!res.ok) throw new Error(`ZeroBounce → ${res.status}`);
-  const data = (await res.json()) as { status?: string; sub_status?: string };
+  const data = (await res.json()) as { status?: string; sub_status?: string; error?: string };
+  // ZeroBounce returns HTTP 200 with an { error } body (or simply omits status)
+  // when rate-limited / out of credits / on a transient fault. Treat that as a
+  // RETRYABLE failure — throw so the caller leaves the row 'unverified' to be
+  // re-tried next tick, rather than silently banking a non-result as definitive.
+  if (data.error || !data.status) {
+    throw new Error(`ZeroBounce no-status response: ${data.error ?? JSON.stringify(data).slice(0, 120)}`);
+  }
   const sub = data.sub_status ?? "";
   switch (data.status) {
     case "valid":
@@ -36,6 +43,8 @@ export async function verifyEmail(email: string): Promise<EmailStatus> {
     case "abuse":
       return "invalid";
     default:
-      return "unverified";
+      // An unrecognised status is unexpected (ZeroBounce's set is fixed) — treat
+      // as retryable rather than burning the row to a wrong terminal status.
+      throw new Error(`ZeroBounce unexpected status: ${data.status}`);
   }
 }
