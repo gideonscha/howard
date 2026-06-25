@@ -40,6 +40,77 @@ function lastNDays(n: number): string[] {
   return out;
 }
 
+// Pacific-time hour bucket key ("YYYY-MM-DD HH") — sends/window are PT-based, so
+// the hourly chart reads naturally in the timezone we operate in.
+function ptHourKey(d: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  const hh = get("hour") === "24" ? "00" : get("hour");
+  return `${get("year")}-${get("month")}-${get("day")} ${hh}`;
+}
+
+// The last n hourly buckets (PT), oldest→newest. Stepping back in 1h UTC
+// increments yields consecutive PT hours (PT is a whole-hour offset).
+function lastNHours(n: number): { key: string; label: string }[] {
+  const now = Date.now();
+  const out: { key: string; label: string }[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const key = ptHourKey(new Date(now - i * 3_600_000));
+    out.push({ key, label: key.slice(11) });
+  }
+  return out;
+}
+
+// Inline SVG hourly bar chart: outgoing vs incoming email per hour (PT).
+function HourlyComms({ buckets }: { buckets: { label: string; out: number; inc: number }[] }) {
+  const w = 700;
+  const h = 120;
+  const max = Math.max(1, ...buckets.flatMap((b) => [b.out, b.inc]));
+  const groupW = w / buckets.length;
+  const barW = Math.max(2, groupW / 3);
+  const series: { key: "out" | "inc"; color: string; label: string }[] = [
+    { key: "out", color: "#8a5a2b", label: "sent" },
+    { key: "inc", color: "#1a7f4b", label: "received" },
+  ];
+  return (
+    <svg viewBox={`0 0 ${w} ${h + 18}`} style={{ width: "100%", height: "auto" }}>
+      {buckets.map((b, i) =>
+        series.map((s, j) => {
+          const v = b[s.key];
+          const bh = (v / max) * h;
+          return (
+            <rect
+              key={`${i}-${j}`}
+              x={i * groupW + j * barW + 2}
+              y={h - bh}
+              width={barW - 1}
+              height={bh}
+              rx={1.5}
+              fill={s.color}
+            >
+              <title>{`${b.label}:00 PT — ${b.out} sent, ${b.inc} received`}</title>
+            </rect>
+          );
+        })
+      )}
+      {buckets.map((b, i) =>
+        i % 3 === 0 ? (
+          <text key={i} x={i * groupW + groupW / 2} y={h + 14} fontSize="9" fill="#6b7280" textAnchor="middle">
+            {b.label}
+          </text>
+        ) : null
+      )}
+    </svg>
+  );
+}
+
 // Inline SVG bar chart: one group per day, up to two series.
 function Bars({
   days,
@@ -231,6 +302,7 @@ export default async function MetricsPage() {
     { count: needsAttention },
     { data: targetRow },
     { data: placesCursorRow },
+    { data: inboundActivity },
   ] = await Promise.all([
     fetchAll<{
       stage: string; segment: string; email_status: string; fit_score: number | null;
@@ -245,6 +317,11 @@ export default async function MetricsPage() {
     supa.from("ph_outreach").select("id", { count: "exact", head: true }).eq("needs_attention", true),
     supa.from("ph_config").select("value").eq("key", "prospect_target").maybeSingle(),
     supa.from("ph_config").select("value").eq("key", "_places_cursor").maybeSingle(),
+    supa
+      .from("ph_activity")
+      .select("at")
+      .eq("kind", "inbound")
+      .gte("at", new Date(Date.now() - 26 * 3_600_000).toISOString()),
   ]);
 
   const ps = partners ?? [];
@@ -298,6 +375,25 @@ export default async function MetricsPage() {
   const dryPerDay = days.map(
     (d) => (sendLog ?? []).filter((l) => l.dry_run && l.sent_at.slice(0, 10) === d).length
   );
+
+  // Hourly email comms (last 24h, PT): outgoing sends vs incoming replies.
+  const hours = lastNHours(24);
+  const outByHour = new Map<string, number>();
+  for (const l of sendLog ?? []) {
+    if (l.dry_run) continue;
+    const k = ptHourKey(new Date(l.sent_at));
+    outByHour.set(k, (outByHour.get(k) ?? 0) + 1);
+  }
+  const incByHour = new Map<string, number>();
+  for (const a of (inboundActivity ?? []) as { at: string }[]) {
+    const k = ptHourKey(new Date(a.at));
+    incByHour.set(k, (incByHour.get(k) ?? 0) + 1);
+  }
+  const commsBuckets = hours.map((hr) => ({
+    label: hr.label,
+    out: outByHour.get(hr.key) ?? 0,
+    inc: incByHour.get(hr.key) ?? 0,
+  }));
 
   const sentToday = (sendLog ?? []).filter((l) => !l.dry_run && l.sent_at >= midnight.toISOString()).length;
   const replies = ps.filter((p) => ["replied", "negotiating", "signed", "live"].includes(p.stage)).length;
@@ -392,6 +488,15 @@ export default async function MetricsPage() {
       <div className="card">
         <h2 style={{ marginTop: 0 }}>New partners per day (14d)</h2>
         <Bars days={days} series={[{ label: "added", color: "#8a5a44", values: partnersPerDay }]} />
+      </div>
+
+      <div className="card">
+        <div className="row" style={{ marginBottom: 4 }}>
+          <h2 style={{ margin: 0 }}>Email comms by hour (24h, PT)</h2>
+          <span className="small" style={{ color: "#8a5a2b" }}>■ sent</span>
+          <span className="small" style={{ color: "#1a7f4b" }}>■ received</span>
+        </div>
+        <HourlyComms buckets={commsBuckets} />
       </div>
 
       <div className="card">
