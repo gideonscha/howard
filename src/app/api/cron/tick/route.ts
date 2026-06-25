@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { runAutoApprove } from "@/pipeline/approve";
 import { runSend } from "@/pipeline/send";
 import { runFollowup } from "@/pipeline/followup";
 import { runAttribute } from "@/pipeline/attribute";
@@ -6,10 +7,10 @@ import { runAutopilot } from "@/pipeline/autopilot";
 
 export const maxDuration = 800;
 
-// Single hourly dispatcher (Pro plan). Order: send first (cap-bound and
-// time-sensitive), then the prospecting autopilot (discover→enrich→score→
-// draft top-up), then daily attribution at 06:00 UTC. Sends pace naturally:
-// the daily cap is shared across hourly invocations.
+// Single hourly dispatcher (Pro plan). Order: auto-approve the day's warm-up
+// batch, then send (cap-bound, drip-paced, time-sensitive), then the prospecting
+// autopilot (discover→enrich→score→draft top-up), then daily attribution at
+// 06:00 UTC. Sends pace naturally: the daily cap is shared across invocations.
 export async function GET(req: NextRequest) {
   const auth = req.headers.get("authorization");
   if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -17,6 +18,11 @@ export async function GET(req: NextRequest) {
   }
 
   const results: Record<string, unknown> = {};
+  try {
+    results.autoApprove = await runAutoApprove();
+  } catch (e) {
+    results.autoApprove = { error: (e as Error).message };
+  }
   try {
     results.send = await runSend();
   } catch (e) {

@@ -6,6 +6,7 @@ const KIND_STYLE: Record<string, string> = {
   run: "pill-stage",
   autopilot: "pill-stage",
   send: "pill-live",
+  approve: "pill-live",
   inbound: "pill-hot",
   suppression: "pill-hot",
   error: "pill-hot",

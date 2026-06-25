@@ -1,6 +1,6 @@
 import { db } from "./supabase";
 
-export type ActivityKind = "run" | "autopilot" | "send" | "inbound" | "suppression" | "error";
+export type ActivityKind = "run" | "autopilot" | "send" | "approve" | "inbound" | "suppression" | "error";
 
 // Fire-and-forget event log feeding the /activity page. Must never break a run.
 export async function logActivity(
