@@ -33,6 +33,37 @@ export async function resolveDailyCap(): Promise<number> {
   return Number.isFinite(n) && n > 0 ? n : dailySendCap();
 }
 
+// Current hour (0–23) in US Pacific time, DST-aware.
+function pacificHour(d = new Date()): number {
+  const s = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "2-digit",
+    hour12: false,
+  }).format(d);
+  const h = parseInt(s, 10);
+  return Number.isFinite(h) ? (h === 24 ? 0 : h) : 0;
+}
+
+// Drip pacing (warm-up): send at most `send_per_tick` per cron invocation, and
+// only when the Pacific hour is within [send_window_start_pt, send_window_end_pt]
+// (inclusive). Defaults are wide-open (no per-tick limit, all hours) so unset
+// config preserves the old "send the whole approved batch" behaviour.
+async function resolveSendPacing(cap: number): Promise<{ perTick: number; startPt: number; endPt: number }> {
+  const { data } = await db()
+    .from("ph_config")
+    .select("key,value")
+    .in("key", ["send_per_tick", "send_window_start_pt", "send_window_end_pt"]);
+  const m = new Map((data ?? []).map((r) => [r.key, Number(r.value)]));
+  const perTickRaw = m.get("send_per_tick");
+  const startRaw = m.get("send_window_start_pt");
+  const endRaw = m.get("send_window_end_pt");
+  return {
+    perTick: Number.isFinite(perTickRaw) && (perTickRaw as number) > 0 ? (perTickRaw as number) : cap,
+    startPt: Number.isFinite(startRaw) ? (startRaw as number) : 0,
+    endPt: Number.isFinite(endRaw) ? (endRaw as number) : 23,
+  };
+}
+
 export async function runSend(): Promise<{ sent: number; dryRun: number; skipped: string[] }> {
   const supa = db();
   const cap = await resolveDailyCap();
@@ -43,12 +74,20 @@ export async function runSend(): Promise<{ sent: number; dryRun: number; skipped
 
   if (already >= cap) return { sent, dryRun, skipped: [`daily cap reached (${already}/${cap})`] };
 
+  const { perTick, startPt, endPt } = await resolveSendPacing(cap);
+  const hr = pacificHour();
+  if (hr < startPt || hr > endPt) {
+    return { sent, dryRun, skipped: [`outside send window (PT hour ${hr}, window ${startPt}-${endPt})`] };
+  }
+  const batch = Math.min(cap - already, perTick);
+  if (batch <= 0) return { sent, dryRun, skipped: [`per-tick limit reached (${perTick}/tick)`] };
+
   const { data: approved, error } = await supa
     .from("ph_outreach")
     .select("*, ph_partners(*)")
     .eq("status", "approved")
     .order("created_at", { ascending: true })
-    .limit(cap - already);
+    .limit(batch);
   if (error) throw error;
 
   const { data: suppressed } = await supa.from("ph_suppression").select("email,domain");
