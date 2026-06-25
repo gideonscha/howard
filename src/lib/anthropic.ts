@@ -9,9 +9,10 @@ export function anthropic(): Anthropic {
 }
 
 export function model(): string {
-  // Default to Sonnet (drafts, replies, follow-ups, extraction) — far cheaper
-  // than Opus and ample for these. Override with ANTHROPIC_MODEL.
-  return optionalEnv("ANTHROPIC_MODEL", "claude-sonnet-4-6");
+  // Drafts, replies, follow-ups, extraction stay on Opus (customer-facing copy
+  // quality). Override with ANTHROPIC_MODEL. The high-volume cost was the
+  // per-partner classifier, which now uses classifyModel() (Haiku) instead.
+  return optionalEnv("ANTHROPIC_MODEL", "claude-opus-4-8");
 }
 
 // Cheap model for the high-volume, low-complexity classification call (one per
