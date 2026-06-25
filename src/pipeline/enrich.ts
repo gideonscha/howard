@@ -1,5 +1,5 @@
 import { scrapeMarkdown } from "@/lib/firecrawl";
-import { structured } from "@/lib/anthropic";
+import { structured, classifyModel } from "@/lib/anthropic";
 import { verifyEmail } from "@/lib/verify-email";
 import { db } from "@/lib/supabase";
 import { domainOf, emailDomainAligned } from "@/lib/contact-guard";
@@ -108,7 +108,9 @@ async function enrichOne(partner: Partner): Promise<boolean> {
   let siteContent = "";
   if (partner.website) {
     try {
-      siteContent = (await scrapeMarkdown(partner.website)).slice(0, 20000);
+      // 6k chars (~1.5k tokens) is plenty to judge fit + pull a contact detail;
+      // the old 20k just inflated input tokens on every partner.
+      siteContent = (await scrapeMarkdown(partner.website)).slice(0, 6000);
     } catch {
       siteContent = "";
     }
@@ -129,6 +131,8 @@ ${siteContent || "(no website content available)"}
 ---
 Classify this business.`,
     schema: CLASSIFY_SCHEMA,
+    model: classifyModel(),
+    maxTokens: 512,
   });
 
   // Domain-alignment guard: a scraped/LLM-extracted address is only trusted if

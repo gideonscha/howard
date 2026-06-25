@@ -9,7 +9,16 @@ export function anthropic(): Anthropic {
 }
 
 export function model(): string {
-  return optionalEnv("ANTHROPIC_MODEL", "claude-opus-4-8");
+  // Default to Sonnet (drafts, replies, follow-ups, extraction) — far cheaper
+  // than Opus and ample for these. Override with ANTHROPIC_MODEL.
+  return optionalEnv("ANTHROPIC_MODEL", "claude-sonnet-4-6");
+}
+
+// Cheap model for the high-volume, low-complexity classification call (one per
+// enriched partner). Haiku is ~20x cheaper than Opus and easily handles a
+// qualify/decline + field-extraction task. Override with ANTHROPIC_MODEL_CLASSIFY.
+export function classifyModel(): string {
+  return optionalEnv("ANTHROPIC_MODEL_CLASSIFY", "claude-haiku-4-5-20251001");
 }
 
 // One structured-output call: returns schema-valid JSON.
@@ -18,9 +27,10 @@ export async function structured<T>(opts: {
   user: string;
   schema: Record<string, unknown>;
   maxTokens?: number;
+  model?: string;
 }): Promise<T> {
   const res = await anthropic().messages.create({
-    model: model(),
+    model: opts.model ?? model(),
     max_tokens: opts.maxTokens ?? 2048,
     system: opts.system,
     messages: [{ role: "user", content: opts.user }],
@@ -37,9 +47,10 @@ export async function plainText(opts: {
   system: string;
   user: string;
   maxTokens?: number;
+  model?: string;
 }): Promise<string> {
   const res = await anthropic().messages.create({
-    model: model(),
+    model: opts.model ?? model(),
     max_tokens: opts.maxTokens ?? 4096,
     system: opts.system,
     messages: [{ role: "user", content: opts.user }],
