@@ -456,6 +456,15 @@ export default async function MetricsPage() {
       </div>
 
       <div className="card">
+        <div className="row" style={{ marginBottom: 4 }}>
+          <h2 style={{ margin: 0 }}>Email comms by hour (24h, PT)</h2>
+          <span className="small" style={{ color: "#8a5a2b" }}>■ sent</span>
+          <span className="small" style={{ color: "#1a7f4b" }}>■ received</span>
+        </div>
+        <HourlyComms buckets={commsBuckets} />
+      </div>
+
+      <div className="card">
         <h2 style={{ marginTop: 0 }}>Pipeline funnel</h2>
         {STAGES.map((s) => (
           <HBar key={s} label={s} value={stageCounts[s]} max={stageMax} color="#8a5a44" />
@@ -488,15 +497,6 @@ export default async function MetricsPage() {
       <div className="card">
         <h2 style={{ marginTop: 0 }}>New partners per day (14d)</h2>
         <Bars days={days} series={[{ label: "added", color: "#8a5a44", values: partnersPerDay }]} />
-      </div>
-
-      <div className="card">
-        <div className="row" style={{ marginBottom: 4 }}>
-          <h2 style={{ margin: 0 }}>Email comms by hour (24h, PT)</h2>
-          <span className="small" style={{ color: "#8a5a2b" }}>■ sent</span>
-          <span className="small" style={{ color: "#1a7f4b" }}>■ received</span>
-        </div>
-        <HourlyComms buckets={commsBuckets} />
       </div>
 
       <div className="card">
