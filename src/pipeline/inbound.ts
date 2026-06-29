@@ -10,6 +10,7 @@ interface ReplyTriage {
     | "question" // a genuine question before deciding
     | "not_interested"
     | "unsubscribe"
+    | "referral" // can't decide personally → points to a manager/owner/HQ/franchise
     // escalations — flag to Gideon, draft nothing
     | "negotiation_or_terms"
     | "call_request"
@@ -17,6 +18,7 @@ interface ReplyTriage {
     | "who_is_howard"
     | "other";
   shipping_address: string | null;
+  referred_contact: string | null; // who/where they redirected us to (referral)
   suggested_reply: string | null;
 }
 
@@ -30,6 +32,7 @@ const TRIAGE_SCHEMA = {
         "question",
         "not_interested",
         "unsubscribe",
+        "referral",
         "negotiation_or_terms",
         "call_request",
         "complaint",
@@ -38,9 +41,10 @@ const TRIAGE_SCHEMA = {
       ],
     },
     shipping_address: { type: ["string", "null"] },
+    referred_contact: { type: ["string", "null"] },
     suggested_reply: { type: ["string", "null"] },
   },
-  required: ["category", "shipping_address", "suggested_reply"],
+  required: ["category", "shipping_address", "referred_contact", "suggested_reply"],
   additionalProperties: false,
 };
 
@@ -63,14 +67,15 @@ export async function classifyReplyIntent(opts: {
 You are classifying the INTENT of an inbound reply from a partner prospect — judge meaning, not keywords. Buckets:
 - "interested": ANY sign they want to go ahead or learn more — "yes", "sure", "tell me more", "sounds good", "send them over", "we'd love to". Lean toward this when in doubt between interested and question.
 - "question": they're asking something before deciding (how it works, what's the catch, timing) without a clear yes.
-- "not_interested": a polite or clear no.
+- "not_interested": a polite or clear no FROM the right person (they themselves decline and don't point elsewhere).
 - "unsubscribe": asks to stop being contacted / remove them.
+- "referral": they personally can't decide / aren't authorized, but point us to someone else who can — a manager, owner, headquarters, or franchise. This is NOT a no; it's a hand-off to the decision-maker. Capture who/where in referred_contact (name, title, company, location, phone/email — whatever they gave).
 - "negotiation_or_terms": wants different terms, pricing, a contract.
 - "call_request": wants a phone call or meeting.
 - "complaint": annoyed, reporting spam, upset.
 - "who_is_howard": asks who/what Howard is, if this is a bot, etc.
 - "other": none of the above.
-Write suggested_reply ONLY for "question" (a brief, warm, accurate answer using the offer below) — null for everything else. If a shipping address appears anywhere in the reply, extract it into shipping_address.
+Write suggested_reply ONLY for "question" (a brief, warm, accurate answer using the offer below) — null for everything else. Set referred_contact ONLY for "referral" (null otherwise). If a shipping address appears anywhere in the reply, extract it into shipping_address.
 
 The offer (use these EXACT terms if you reference them):
 ${offerBlock(offer)}`,
@@ -85,7 +90,7 @@ ${opts.replyText.slice(0, 6000)}
     });
   } catch (e) {
     console.error(`inbound triage failed: ${(e as Error).message}`);
-    return { category: "other", shipping_address: null, suggested_reply: null };
+    return { category: "other", shipping_address: null, referred_contact: null, suggested_reply: null };
   }
 }
 
@@ -139,7 +144,9 @@ export async function handleReply(opts: {
     ? { sample_address: triage.shipping_address }
     : {};
 
-  if (triage.category === "unsubscribe" || triage.category === "not_interested") {
+  // Unsubscribe is the only bucket we auto-close: honor the opt-out immediately
+  // (suppress + decline), no review needed.
+  if (triage.category === "unsubscribe") {
     await supa.from("ph_suppression").insert({
       email: opts.fromEmail.toLowerCase(),
       reason: `reply: ${triage.category}`,
@@ -164,7 +171,20 @@ export async function handleReply(opts: {
     return;
   }
 
-  if (ESCALATE.has(triage.category)) {
+  // Review-only buckets: surface the reply for a human with NO auto-send and NO
+  // auto-suppress — escalations, referrals (hand-off to a decision-maker), and
+  // plain not-interested. Nothing here is ever silently closed out; a person
+  // decides. The "ESCALATION" prefix renders it in the queue's escalation
+  // section (reply in context + a dismiss button), since there's nothing to send.
+  if (ESCALATE.has(triage.category) || triage.category === "referral" || triage.category === "not_interested") {
+    let reason: string;
+    if (triage.category === "referral") {
+      reason = `ESCALATION (referral) — points to ${triage.referred_contact ?? "another decision-maker"}; pursue them, don't reply in this thread`;
+    } else if (triage.category === "not_interested") {
+      reason = "ESCALATION (not interested) — review before closing; not auto-suppressed";
+    } else {
+      reason = `ESCALATION (${triage.category}) — no draft; loop in Gideon from this thread`;
+    }
     await supa
       .from("ph_partners")
       .update({ stage: "replied", ...addressPatch, updated_at: new Date().toISOString() })
@@ -179,7 +199,7 @@ export async function handleReply(opts: {
       agentmail_message_id: opts.inboundMessageId,
       agentmail_thread_id: opts.outreach.agentmail_thread_id,
       needs_attention: true,
-      attention_reason: `ESCALATION (${triage.category}) — no draft; loop in Gideon from this thread`,
+      attention_reason: reason,
     });
     return;
   }
