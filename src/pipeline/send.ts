@@ -46,28 +46,36 @@ function pacificHour(d = new Date()): number {
 
 // Drip pacing (warm-up): send at most `send_per_tick` per cron invocation, and
 // only when the Pacific hour is within [send_window_start_pt, send_window_end_pt]
-// (inclusive). `send_first_hour_per_tick` optionally lets the FIRST window hour
-// send more (e.g. front-load 2 at 8am, then 1/hour). Defaults are wide-open (no
-// per-tick limit, all hours) so unset config preserves the old "send the whole
-// approved batch" behaviour.
+// (inclusive). The first `send_boost_hours` of the window send `send_boost_per_tick`
+// instead (e.g. 2/hour for the first 5 hours, then 1/hour) — lets the day be
+// front-loaded while still spreading across the whole window. Defaults are
+// wide-open (no per-tick limit, all hours, no boost) so unset config preserves
+// the old "send the whole approved batch" behaviour.
 async function resolveSendPacing(
   cap: number
-): Promise<{ perTick: number; firstHourPerTick: number; startPt: number; endPt: number }> {
+): Promise<{ perTick: number; boostPerTick: number; boostHours: number; startPt: number; endPt: number }> {
   const { data } = await db()
     .from("ph_config")
     .select("key,value")
-    .in("key", ["send_per_tick", "send_first_hour_per_tick", "send_window_start_pt", "send_window_end_pt"]);
+    .in("key", [
+      "send_per_tick",
+      "send_boost_per_tick",
+      "send_boost_hours",
+      "send_window_start_pt",
+      "send_window_end_pt",
+    ]);
   const m = new Map((data ?? []).map((r) => [r.key, Number(r.value)]));
-  const perTickRaw = m.get("send_per_tick");
-  const firstRaw = m.get("send_first_hour_per_tick");
-  const startRaw = m.get("send_window_start_pt");
-  const endRaw = m.get("send_window_end_pt");
-  const perTick = Number.isFinite(perTickRaw) && (perTickRaw as number) > 0 ? (perTickRaw as number) : cap;
+  const num = (k: string) => {
+    const v = m.get(k);
+    return Number.isFinite(v) ? (v as number) : undefined;
+  };
+  const perTick = (num("send_per_tick") ?? 0) > 0 ? (num("send_per_tick") as number) : cap;
   return {
     perTick,
-    firstHourPerTick: Number.isFinite(firstRaw) && (firstRaw as number) > 0 ? (firstRaw as number) : perTick,
-    startPt: Number.isFinite(startRaw) ? (startRaw as number) : 0,
-    endPt: Number.isFinite(endRaw) ? (endRaw as number) : 23,
+    boostPerTick: (num("send_boost_per_tick") ?? 0) > 0 ? (num("send_boost_per_tick") as number) : perTick,
+    boostHours: (num("send_boost_hours") ?? 0) > 0 ? (num("send_boost_hours") as number) : 0,
+    startPt: num("send_window_start_pt") ?? 0,
+    endPt: num("send_window_end_pt") ?? 23,
   };
 }
 
@@ -81,14 +89,15 @@ export async function runSend(): Promise<{ sent: number; dryRun: number; skipped
 
   if (already >= cap) return { sent, dryRun, skipped: [`daily cap reached (${already}/${cap})`] };
 
-  const { perTick, firstHourPerTick, startPt, endPt } = await resolveSendPacing(cap);
+  const { perTick, boostPerTick, boostHours, startPt, endPt } = await resolveSendPacing(cap);
   const hr = pacificHour();
   if (hr < startPt || hr > endPt) {
     return { sent, dryRun, skipped: [`outside send window (PT hour ${hr}, window ${startPt}-${endPt})`] };
   }
-  // The first window hour may carry an extra allowance (front-load); other hours
+  // The first `boostHours` hours of the window carry the boosted rate; the rest
   // use the standard per-tick. The daily cap is always the hard ceiling.
-  const effectivePerTick = hr === startPt ? firstHourPerTick : perTick;
+  const inBoost = boostHours > 0 && hr >= startPt && hr < startPt + boostHours;
+  const effectivePerTick = inBoost ? boostPerTick : perTick;
   const batch = Math.min(cap - already, effectivePerTick);
   if (batch <= 0) return { sent, dryRun, skipped: [`per-tick limit reached (${effectivePerTick}/tick)`] };
 
