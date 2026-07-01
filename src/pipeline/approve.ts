@@ -45,6 +45,18 @@ export async function runAutoApprove(): Promise<{
   const already = Number(markerRow?.value) || 0;
   if (already >= perDay) return { approved: 0, capReached: true };
 
+  // Warm-up deliverability: when `warmup_major_hosted_only` is on, only approve
+  // recipients hosted by tolerant major providers (Gmail/Workspace/M365/etc.).
+  // Small self-hosted business servers greylist a young sending domain and time
+  // out (transient 4.4.7). This defers — never discards — those prospects; they
+  // stay as drafts until the flag is turned off once the domain is warmer.
+  const { data: warmupRow } = await supa
+    .from("ph_config")
+    .select("value")
+    .eq("key", "warmup_major_hosted_only")
+    .maybeSingle();
+  const majorOnly = String(warmupRow?.value).toLowerCase() === "true";
+
   const want = perDay - already;
   const { data: candidates } = await supa
     .from("ph_outreach")
@@ -54,20 +66,32 @@ export async function runAutoApprove(): Promise<{
     .eq("is_reply_draft", false)
     .eq("touch_number", 1)
     .order("created_at", { ascending: true })
-    .limit(want * 4);
+    .limit(want * (majorOnly ? 10 : 4));
 
   const partnerIds = [...new Set((candidates ?? []).map((c) => c.partner_id))];
   const { data: partnerRows } = partnerIds.length
-    ? await supa.from("ph_partners").select("id,email_status").in("id", partnerIds)
+    ? await supa.from("ph_partners").select("id,email_status,email").in("id", partnerIds)
     : { data: [] };
-  const sendable = new Set(
-    (partnerRows ?? []).filter((p) => isSendableStatus(p.email_status)).map((p) => p.id)
-  );
+  const byPartner = new Map((partnerRows ?? []).map((p) => [p.id, p]));
+
+  const { isMajorHostedDomain } = majorOnly
+    ? await import("@/lib/mail-host")
+    : { isMajorHostedDomain: null };
 
   const ids: string[] = [];
+  let deferredSmallHost = 0;
   for (const c of candidates ?? []) {
     if (ids.length >= want) break;
-    if (sendable.has(c.partner_id)) ids.push(c.id);
+    const partner = byPartner.get(c.partner_id);
+    if (!partner || !isSendableStatus(partner.email_status)) continue;
+    if (majorOnly && isMajorHostedDomain) {
+      const domain = (partner.email ?? "").split("@")[1];
+      if (!(await isMajorHostedDomain(domain))) {
+        deferredSmallHost++;
+        continue;
+      }
+    }
+    ids.push(c.id);
   }
   if (ids.length === 0) return { approved: 0 };
 
@@ -83,7 +107,8 @@ export async function runAutoApprove(): Promise<{
   const { logActivity } = await import("@/lib/activity");
   await logActivity(
     "approve",
-    `auto-approved ${ids.length} first-touch draft(s) for the warm-up drip (${already + ids.length}/${perDay} today)`
+    `auto-approved ${ids.length} first-touch draft(s) for the warm-up drip (${already + ids.length}/${perDay} today)` +
+      (majorOnly ? ` · deferred ${deferredSmallHost} self-hosted-domain recipient(s)` : "")
   );
   return { approved: ids.length };
 }
