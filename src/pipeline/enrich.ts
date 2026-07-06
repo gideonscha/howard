@@ -73,28 +73,39 @@ async function processPool<T>(
 export async function reverifyPass(limit = 200, concurrency = 10): Promise<number> {
   const supa = db();
   let recheckedSendable = 0;
+  // Only rows we have NOT already re-checked. Without this filter the pass
+  // re-sends every 'unverified' row to ZeroBounce every tick forever — the main
+  // driver of runaway credit usage. Each row gets exactly one re-verify attempt.
   const { data: rows } = await supa
     .from("ph_partners")
     .select("id,email,email_status,enrichment")
     .in("stage", ["qualified", "queued"])
     .eq("email_status", "unverified")
     .not("email", "is", null)
+    .or("enrichment->>reverified.is.null,enrichment->>reverified.neq.done")
     .limit(limit);
   const deadline = Date.now() + 90_000;
   await processPool(rows ?? [], concurrency, deadline, async (row) => {
+    const enrichment = { ...((row.enrichment as Record<string, unknown>) ?? {}), reverified: "done" };
     try {
       const status = await verifyEmail(row.email as string);
       if (status === "verified" || status === "catch_all") recheckedSendable++;
       await supa
         .from("ph_partners")
-        .update({
-          email_status: status,
-          enrichment: { ...((row.enrichment as Record<string, unknown>) ?? {}), reverified: "done" },
-          updated_at: new Date().toISOString(),
-        })
+        .update({ email_status: status, enrichment, updated_at: new Date().toISOString() })
         .eq("id", row.id);
     } catch (e) {
       console.warn(`reverify: failed for ${row.email}: ${(e as Error).message}`);
+      // Mark attempted even on failure, so a persistently-unresolvable address
+      // (dead/obscure domain ZeroBounce can't reach) isn't retried every tick.
+      try {
+        await supa
+          .from("ph_partners")
+          .update({ enrichment, updated_at: new Date().toISOString() })
+          .eq("id", row.id);
+      } catch {
+        /* best-effort */
+      }
     }
   });
   return recheckedSendable;
