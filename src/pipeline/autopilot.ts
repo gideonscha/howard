@@ -84,11 +84,17 @@ export async function runAutopilot(): Promise<Record<string, unknown>> {
   }
 
   // 2. Enrich a batch of whatever discovery produced — concurrently, since
-  //    enrichment (not discovery) is the throughput bottleneck.
-  try {
-    summary.enrich = await runEnrich(enrichPerTick, enrichConcurrency);
-  } catch (e) {
-    summary.enrich = { error: (e as Error).message };
+  //    enrichment (not discovery) is the throughput bottleneck. Skippable via
+  //    `enrich_enabled=false` to halt all ZeroBounce/Firecrawl/LLM spend when
+  //    we're oversupplied and just draining the queue.
+  if ((config.enrich_enabled ?? "true") === "false") {
+    summary.enrich = "skipped — enrich paused (enrich_enabled=false)";
+  } else {
+    try {
+      summary.enrich = await runEnrich(enrichPerTick, enrichConcurrency);
+    } catch (e) {
+      summary.enrich = { error: (e as Error).message };
+    }
   }
 
   // 3. Re-score the queue.
