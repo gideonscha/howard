@@ -63,6 +63,12 @@ function linkifyHtml(s: string): string {
     .replace(/\n/g, "<br>");
 }
 
+// Exact same rendering the recipient's mail client gets — used by the dashboard
+// to preview a draft body (images + links) before approval.
+export function renderBodyHtml(body: string): string {
+  return linkifyHtml(body);
+}
+
 export async function sendEmail(opts: {
   to: string;
   subject: string;

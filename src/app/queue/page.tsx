@@ -1,4 +1,5 @@
 import { db } from "@/lib/supabase";
+import { renderBodyHtml } from "@/lib/agentmail";
 import { Outreach, Partner } from "@/pipeline/types";
 import {
   approveDraft,
@@ -173,6 +174,18 @@ function DraftCard({ row, hot }: { row: Row; hot?: boolean }) {
           <div className="email-body small">{row.reply_snippet}</div>
         </>
       )}
+      {/* Rendered exactly as the recipient's mail client will show it —
+          images and links resolve; the textarea below stays the editable source. */}
+      <details>
+        <summary className="small muted" style={{ cursor: "pointer" }}>
+          Preview as recipient sees it
+        </summary>
+        <div
+          className="email-body small"
+          style={{ border: "1px solid #e5e2db", borderRadius: 8, padding: 12, marginTop: 6, background: "#fff" }}
+          dangerouslySetInnerHTML={{ __html: renderBodyHtml(row.body) }}
+        />
+      </details>
       <form action={approveDraft}>
         <input type="hidden" name="id" value={row.id} />
         <input type="text" name="subject" defaultValue={row.subject} />
