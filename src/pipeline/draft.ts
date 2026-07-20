@@ -231,7 +231,9 @@ ONE researched detail to open with: ${detail}`,
         `${resolveGreeting(p.contact_name, p.email)}\n\n` +
         `${d.detail.trim()} ${WHO_WE_ARE}\n\n` +
         `${block}\n\n` +
-        `Here's exactly what a family would receive — take a look [here](${wrapped}).\n\n` +
+        `Here's the product at a glance — and how it can sit right on your counter as a ready-to-offer package for families:\n\n` +
+        `![Magic Portraits — Star in Heaven boxed set](${base}/product-box.jpg)\n\n` +
+        `And here's exactly what a family would receive — take a look [here](${wrapped}).\n\n` +
         `${d.cta.trim()}\n\n` +
         `Howard / Magic Portraits`;
 

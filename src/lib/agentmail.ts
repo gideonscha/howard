@@ -37,11 +37,16 @@ export function canSpamFooter(recipientEmail: string): { text: string; html: str
 
 // Render `[label](url)` links: plain-text shows "label: url" (clients can't
 // hyperlink), HTML shows a tidy <a>label</a> so long tracking URLs don't appear
-// as a wall of characters in the inbox.
+// as a wall of characters in the inbox. `![alt](url)` images render as an
+// inline <img> in HTML (constrained width) and "alt: url" in plain text —
+// images must be processed FIRST since the link regex would also match them.
+const MD_IMAGE = /!\[([^\]]*)\]\(([^)]+)\)/g;
 const MD_LINK = /\[([^\]]+)\]\(([^)]+)\)/g;
 
 function linkifyText(s: string): string {
-  return s.replace(MD_LINK, (_m, label, url) => `${label}: ${url}`);
+  return s
+    .replace(MD_IMAGE, (_m, alt, url) => `${alt || "image"}: ${url}`)
+    .replace(MD_LINK, (_m, label, url) => `${label}: ${url}`);
 }
 
 function linkifyHtml(s: string): string {
@@ -49,6 +54,11 @@ function linkifyHtml(s: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
+    .replace(
+      MD_IMAGE,
+      (_m, alt, url) =>
+        `<img src="${url}" alt="${alt}" style="display:block;max-width:100%;width:480px;border-radius:8px;margin:8px 0">`
+    )
     .replace(MD_LINK, (_m, label, url) => `<a href="${url}">${label}</a>`)
     .replace(/\n/g, "<br>");
 }
