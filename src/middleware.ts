@@ -8,6 +8,9 @@ import { NextRequest, NextResponse } from "next/server";
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (pathname.startsWith("/api/") || pathname.startsWith("/c/")) return NextResponse.next();
+  // Public static assets (e.g. images embedded in outreach emails) must load
+  // without auth — mail clients fetch them via anonymous image proxies.
+  if (/\.(jpe?g|png|gif|webp|svg|ico)$/i.test(pathname)) return NextResponse.next();
 
   const user = process.env.DASHBOARD_USER;
   const pass = process.env.DASHBOARD_PASSWORD;
