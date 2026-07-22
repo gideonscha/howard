@@ -1,8 +1,21 @@
 import { structured } from "@/lib/anthropic";
 import { getConfig, HOWARD_PERSONA, offerBlock, offerConfig } from "@/lib/config";
-import { followupDelaysDays, sendingEnabled } from "@/lib/env";
+import { followupDelaysDays, publicBaseUrl, sendingEnabled } from "@/lib/env";
 import { db } from "@/lib/supabase";
 import { Outreach, Partner } from "./types";
+
+// The product box shot measurably helps (first interested reply came right
+// after it was added to touch 1), so cadence follow-ups carry it too. Inserted
+// in CODE above the signature — the model never writes the image line.
+function withProductImage(body: string): string {
+  if (body.includes("product-box.jpg")) return body;
+  const img = `Here's the set at a glance:\n\n![Magic Portraits — Star in Heaven boxed set](${publicBaseUrl()}/product-box.jpg)`;
+  const signed = body.replace(
+    /\n*Howard\s*\/\s*Magic Portraits\s*$/,
+    `\n\n${img}\n\nHoward / Magic Portraits`
+  );
+  return signed.includes("product-box.jpg") ? signed : `${body}\n\n${img}`;
+}
 
 const DRAFT_SCHEMA = {
   type: "object",
@@ -64,7 +77,7 @@ Previous body:\n${last.body}`,
         partner_id: p.id,
         touch_number: touchNumber,
         subject: d.subject,
-        body: d.body,
+        body: withProductImage(d.body),
         status: "draft",
         is_reply_draft: true, // threads onto the original message
         agentmail_message_id: last.agentmail_message_id,
