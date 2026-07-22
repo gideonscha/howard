@@ -11,12 +11,15 @@ function pacificDayKey(d = new Date()): string {
   }).format(d);
 }
 
-// Warm-up auto-approval. Each Pacific day, approve up to `auto_approve_per_day`
-// of the OLDEST first-touch drafts (sendable email, not flagged for attention)
-// so the hourly send drip always has fuel without manual queue triage. Works
-// down the queue from the top, day by day. Safety rails:
-//   - only first-touch outreach (touch_number=1, not reply drafts) — replies and
-//     attention-flagged items stay human-gated;
+// Auto-approval. Each Pacific day, approve up to `auto_approve_per_day` drafts
+// so the hourly send drip always has fuel without manual queue triage.
+// CADENCE FOLLOW-UPS (touch 2-3, no-reply nudges) are approved FIRST — they
+// out-convert cold first-touches — then first-touches fill the remainder.
+// Safety rails:
+//   - replies to real humans and anything attention-flagged stay human-gated
+//     (both carry needs_attention=true); sample-arrival check-ins stay manual;
+//   - a follow-up whose partner replies before send is auto-rejected by the
+//     inbound handler, so cadence can't fire at someone mid-conversation;
 //   - only partners with a sendable (verified/catch_all) email;
 //   - bounded to N per Pacific day via a per-day marker;
 //   - off unless auto_approve_per_day > 0, and paused when sending is disabled.
@@ -58,15 +61,30 @@ export async function runAutoApprove(): Promise<{
   const majorOnly = String(warmupRow?.value).toLowerCase() === "true";
 
   const want = perDay - already;
-  const { data: candidates } = await supa
+  const fetchCap = want * (majorOnly ? 10 : 4);
+
+  // Cadence follow-ups first (touch 2+, threaded, not sample check-ins) …
+  const { data: followupCandidates } = await supa
     .from("ph_outreach")
-    .select("id, partner_id")
+    .select("id, partner_id, is_reply_draft")
+    .eq("status", "draft")
+    .eq("needs_attention", false)
+    .eq("is_reply_draft", true)
+    .gte("touch_number", 2)
+    .not("subject", "ilike", "[sample follow-up]%")
+    .order("created_at", { ascending: true })
+    .limit(fetchCap);
+  // … then fresh first-touches fill whatever budget remains.
+  const { data: firstTouchCandidates } = await supa
+    .from("ph_outreach")
+    .select("id, partner_id, is_reply_draft")
     .eq("status", "draft")
     .eq("needs_attention", false)
     .eq("is_reply_draft", false)
     .eq("touch_number", 1)
     .order("created_at", { ascending: true })
-    .limit(want * (majorOnly ? 10 : 4));
+    .limit(fetchCap);
+  const candidates = [...(followupCandidates ?? []), ...(firstTouchCandidates ?? [])];
 
   const partnerIds = [...new Set((candidates ?? []).map((c) => c.partner_id))];
   const { data: partnerRows } = partnerIds.length
@@ -79,8 +97,10 @@ export async function runAutoApprove(): Promise<{
     : { isMajorHostedDomain: null };
 
   const ids: string[] = [];
+  let followups = 0;
+  let firstTouches = 0;
   let deferredSmallHost = 0;
-  for (const c of candidates ?? []) {
+  for (const c of candidates) {
     if (ids.length >= want) break;
     const partner = byPartner.get(c.partner_id);
     if (!partner || !isSendableStatus(partner.email_status)) continue;
@@ -92,6 +112,8 @@ export async function runAutoApprove(): Promise<{
       }
     }
     ids.push(c.id);
+    if (c.is_reply_draft) followups++;
+    else firstTouches++;
   }
   if (ids.length === 0) return { approved: 0 };
 
@@ -107,7 +129,7 @@ export async function runAutoApprove(): Promise<{
   const { logActivity } = await import("@/lib/activity");
   await logActivity(
     "approve",
-    `auto-approved ${ids.length} first-touch draft(s) for the warm-up drip (${already + ids.length}/${perDay} today)` +
+    `auto-approved ${followups} follow-up(s) + ${firstTouches} first-touch(es) for the drip (${already + ids.length}/${perDay} today)` +
       (majorOnly ? ` · deferred ${deferredSmallHost} self-hosted-domain recipient(s)` : "")
   );
   return { approved: ids.length };
