@@ -141,6 +141,10 @@ export async function runSend(): Promise<{ sent: number; dryRun: number; skipped
       continue;
     }
 
+    // Space consecutive sends: back-to-back AgentMail calls trip its rate limit
+    // (429) — and a 429'd reply can still post, desyncing our state from the thread.
+    if (sent > 0) await new Promise((r) => setTimeout(r, 2000));
+
     try {
       const result = row.is_reply_draft && row.agentmail_message_id
         ? await replyToMessage({ messageId: row.agentmail_message_id, to: email, text: row.body })

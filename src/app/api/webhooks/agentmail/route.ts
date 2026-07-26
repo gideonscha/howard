@@ -140,6 +140,16 @@ export async function POST(req: NextRequest) {
   const msg = event.message;
   const fromEmail = parseAddress(msg.from);
 
+  // Our own outbound messages can be echoed back as message.received (seen when
+  // a threaded reply hit a 429 at the HTTP layer but still posted). Without this
+  // guard the thread-match treats our own text as the partner's reply — pausing
+  // cadence and logging a phantom reply. Anything from our own domain is us.
+  const ownDomain = (process.env.HOWARD_INBOX ?? "howard@magicportraitspartners.com").split("@")[1];
+  if (fromEmail.endsWith(`@${ownDomain}`)) {
+    console.log(`webhook: ignoring echo of our own message (${fromEmail}) on thread ${msg.thread_id}`);
+    return NextResponse.json({ ok: true, ignored: "own-message-echo" });
+  }
+
   // Match the thread to our outreach.
   let { data: outreach } = await supa
     .from("ph_outreach")
