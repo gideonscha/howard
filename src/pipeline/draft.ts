@@ -218,8 +218,17 @@ ONE researched detail to open with: ${detail}`,
         maxTokens: 600,
       });
 
+      // A/B: alternate copy variants so reply rates are comparable in one batch.
+      //  A (control): full offer block with commission/discount numbers.
+      //  B (samples-first): leads with the free sample sets, no numbers, single
+      //    low-friction CTA — reply with a shipping address. ~10% of recipients
+      //    click the demo but ~0.5% reply, so B trades detail for an easier yes.
+      const variantB = drafted % 2 === 1;
+
       // Guarantee subject uniqueness within the batch.
-      let subject = d.subject.trim();
+      let subject = variantB
+        ? `2 free Star in Heaven sample sets for ${p.business_name}`
+        : d.subject.trim();
       if (usedSubjects.some((s) => s.toLowerCase() === subject.toLowerCase())) {
         subject = `${subject} (${p.city ?? p.state ?? "your area"})`;
       }
@@ -227,15 +236,23 @@ ONE researched detail to open with: ${detail}`,
       // Pre-generate the id so we can embed the wrapped CTA in one write.
       const id = randomUUID();
       const wrapped = `${base}/c/${clickToken(id)}`;
-      const body =
-        `${resolveGreeting(p.contact_name, p.email)}\n\n` +
-        `${d.detail.trim()} ${WHO_WE_ARE}\n\n` +
-        `${block}\n\n` +
+      const imageBlock =
         `Here's the product at a glance — and how it can sit right on your counter as a ready-to-offer package for families:\n\n` +
         `![Magic Portraits — Star in Heaven boxed set](${base}/product-box.jpg)\n\n` +
-        `And here's exactly what a family would receive — take a look [here](${wrapped}).\n\n` +
-        `${d.cta.trim()}\n\n` +
-        `Howard / Magic Portraits`;
+        `And here's exactly what a family would receive — take a look [here](${wrapped}).`;
+      const body = variantB
+        ? `${resolveGreeting(p.contact_name, p.email)}\n\n` +
+          `${d.detail.trim()} ${WHO_WE_ARE}\n\n` +
+          `I'd love to send you two free sets of four Star in Heaven portraits (about $200 value) — yours to keep and display, no strings attached.\n\n` +
+          `${imageBlock}\n\n` +
+          `Want me to mail them? Just reply with your shipping address and I'll get them out this week.\n\n` +
+          `Howard / Magic Portraits`
+        : `${resolveGreeting(p.contact_name, p.email)}\n\n` +
+          `${d.detail.trim()} ${WHO_WE_ARE}\n\n` +
+          `${block}\n\n` +
+          `${imageBlock}\n\n` +
+          `${d.cta.trim()}\n\n` +
+          `Howard / Magic Portraits`;
 
       const { error: insErr } = await supa.from("ph_outreach").insert({
         id,
